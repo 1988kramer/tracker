@@ -48,11 +48,12 @@ void updateDisplay()
   if (switch_pressed)
     encoder_pos = 0;
   uint8_t num_options = 7;
-  int8_t highlighted = encoder_pos % num_options;
-  if (highlighted < 0)
-    highlighted += num_options;
   if (encoder_pos != last_encoder_pos)
   {
+    Serial.println("updating display");
+    int8_t highlighted = encoder_pos % num_options;
+    if (highlighted < 0)
+      highlighted += num_options;
     last_encoder_pos = encoder_pos;
     display.clearDisplay();
     display.setCursor(0,0);
@@ -89,6 +90,8 @@ void checkEncoderState()
       encoderBUpdate(enc_a_state, enc_b_state);
       last_encoder_time = cur_time;
     }
+    Serial.print("last encoder state: ");
+    Serial.println(last_encoder_pos);
   }
 }
 
