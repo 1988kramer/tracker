@@ -22,6 +22,7 @@
 #define FILTER_UPDATE_HZ   100
 #define FILTER_PUB_HZ      1
 
+
 /* - - - - - - - - - encoder variables - - - - - - - - - - */
 
 int encoder_pos;
@@ -38,6 +39,7 @@ bool switch_pressed;
 /* - - - - - - - - OLED display object - - - - - - - - - - */
 
 Adafruit_SSD1305 display(OLED_MOSI, OLED_CLK, OLED_DC, OLED_RESET, OLED_CS);
+
 
 /* - - - - - - - Madgwick Filter Variables - - - - - - - - */
 
