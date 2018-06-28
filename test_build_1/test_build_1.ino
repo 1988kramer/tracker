@@ -52,8 +52,18 @@ const float accel_scale_ = 0.000061;
 const float gyro_scale_ = 0.00875;
 const float mag_scale_ = 6482;
 float roll_, pitch_, yaw_;
+LIS3MDL mag_;
+LSM6 imu_;
+Madgwick filter_;
+
 
 /* - - - - - - - - State Control Structure - - - - - - - - */
+
+/* The program's state and behavior are managed through
+ * a graph structure. Each node in the graph holds state
+ * information, pointers to possible next states, and
+ * a function pointer defining the behavior of that node.
+ */
 
 struct stateNode
 {
@@ -195,7 +205,16 @@ void displayText(int8_t highlighted)
 
 void orientFilter(int8_t highlighted)
 {
-
+  // Need to add functions to initialize IMU when needed
+  // and sleep the imu when not needed
+  if (micros() - last_filter_update_ >= filter_update_time_)
+  {
+    updateMadgwick();
+  }
+  if (millis() - last_filter_pub_ >= filter_pub_time_)
+  {
+    publishOrientation();
+  }
 }
 
 stateNode initStates()
@@ -317,5 +336,67 @@ void encoderBUpdate(uint8_t enc_a_state, uint8_t enc_b_state)
   }
   Serial.print("encoder updated to: ");
   Serial.println(encoder_pos_);
+}
+
+void updateMadgwick()
+{
+  float a_x, a_y, a_z;
+  float g_x, g_y, g_z;
+  float m_x, m_y, m_z;
+   
+  mag_.read();
+  imu_.read();
+    
+  convertRawAccel(a_x,a_y,a_z);
+  convertRawGyro(g_x,g_y,g_z);
+  convertRawMag(m_x,m_y,m_z);
+  
+  filter_.update(g_x, g_y, g_z, a_x, a_y, a_z, m_x, m_y, m_z);
+
+  roll_ = filter.getRoll();
+  pitch_ = filter.getPitch();
+  yaw_ = filter.getYaw();
+
+  last_filter_update_ += filter_update_time_;
+}
+
+void publishOrientation()
+{
+  display_.clearDisplay();
+  display_.setCursor(0,0);
+  display_.print("roll: ");
+  display_.println(roll_);
+  display_.print("pitch: ");
+  display_.println(pitch_);
+  display_.print("yaw: ");
+  display_.println(yaw_);
+  display_.println();
+  display_.println("Press enter to continue.");
+
+  last_filter_pub_ += filter_pub_time_;
+}
+
+// converts raw accelerometer output to g's
+void convertRawAccel(float &x, float &y, float &z)
+{
+  x = (float)imu.a.x * accel_scale_;
+  y = (float)imu.a.y * accel_scale_;
+  z = (float)imu.a.z * accel_scale_;
+}
+
+// converts raw gyro output to deg/sec
+void convertRawGyro(float &x, float &y, float &z)
+{
+  x = (float)imu.g.x * gyro_scale_;
+  y = (float)imu.g.y * gyro_scale_;
+  z = (float)imu.g.z * gyro_scale_;
+}
+
+// converts raw magnetometer output to gauss
+void convertRawMag(float &x, float &y, float &z)
+{
+  x = (float)mag.m.x / mag_scale_;
+  y = (float)mag.m.y / mag_scale_;
+  z = (float)mag.m.z / mag_scale_;
 }
 
