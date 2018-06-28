@@ -67,11 +67,14 @@ Madgwick filter_;
 
 struct stateNode
 {
+  sateNode() : init(NULL), end(NULL) {}
   char disp_options[][];
   uint8_t num_options;
   uint8_t num_lines;
   stateNode *next_states;
-  void (*function)(int8_t);
+  void (*action)(int8_t);
+  void (*init)(void);
+  void (*end)(void);
 };
 
 stateNode cur_state_;
@@ -115,6 +118,12 @@ void initIMU()
   last_filter_pub_ = millis();
 }
 
+// put IMU into low-power state and stop madgwick filter
+void stopIMU()
+{
+
+}
+
 void updateDisplay()
 {
   // find which option should be highlighted
@@ -122,14 +131,18 @@ void updateDisplay()
   if (highlighted < 0)
     highlighted += cur_state_.num_options;
 
-  cur_state_.function(highlighted);
+  cur_state_.action(highlighted);
 
   // advance state if switch is pressed
   if (switch_pressed_)
   {
     switch_pressed_ = false;
     disp_state_change_ = true;
+    if (cur_state_.end != NULL)
+      cur_state_.end();
     cur_state_ = cur_state_.next_states[highlighted];
+    if (cur_state_.init != NULL)
+      cur_state_.init();
     encoder_pos_ = 0;
   }
 }
@@ -200,7 +213,11 @@ void checkSwitchState(unsigned long cur_time)
 
 void displayText(int8_t highlighted)
 {
-
+  display_.clearDisplay();
+  display_.setCursor(0,0);
+  for (int i = 0; i < cur_state_.num_lines; i++)
+    display_.println(cur_state_.options[i]);
+  display_.display();
 }
 
 void orientFilter(int8_t highlighted)
@@ -226,7 +243,7 @@ stateNode initStates()
   orient_node.options = orient_options;
   orient_node.num_lines = 3;
   orient_node.num_options = 3;
-  orient_node.function = &selectFromList;
+  orient_node.action = &selectFromList;
 
   stateNode auto_orient;
   stateNode manual_orient;
@@ -240,10 +257,12 @@ stateNode initStates()
   dead_end.options = dead_end_text; 
   dead_end.num_options = 1;
   dead_end.num_lines = 1;
-  dead_end.function = &displayText;
+  dead_end.action = &displayText;
 
   auto_orient.num_options = 1;
-  auto_orient.function = &autoOrient;
+  auto_orient.init = &initIMU;
+  auto_orient.action = &orientFilter;
+  auto_orient.end = &stopIMU; // needs to be implemented
   auto_orient.next_states = &dead_end;
 
   char manual_orient_msg[][] = {{"align the hinge axis"},
@@ -252,14 +271,14 @@ stateNode initStates()
   manual_orient.options = manual_orient_msg;
   manual_orient.num_options = 1;
   manual_orient.num_lines = 3;
-  manual_orient.function = &displayText;
+  manual_orient.action = &displayText;
   manual_orient.next_states = &dead_end;
 
   char orient_help_msg[][] = {{"help message stub"}};
   orient_help.options = orient_help_msg;
   orient_help.num_options = 1;
   orient_help.num_lines = 1;
-  orient_help.function = &orientFilter;
+  orient_help.action = &displayText;
   orient_help.next_states = &orient_node;
 
   return orient_node;
