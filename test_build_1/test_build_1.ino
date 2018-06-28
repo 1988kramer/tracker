@@ -18,6 +18,10 @@
 #define OLED_DC         28
 #define OLED_RESET      24
 
+// IMU pins
+#define IMU_POWER      18 // need to actually connect this one
+                          // IMU only draws 5mA so this should be safe
+
 // Madgwick filter constants
 #define FILTER_UPDATE_HZ   100
 #define FILTER_PUB_HZ      1
@@ -83,6 +87,7 @@ void setup()
 {
   Serial.begin(9600);
   Serial.println("Testing user interface with orientation filter");
+  digitalWrite(IMU_POWER, LOW); // start with IMU off 
   initEncoder();
   initIMU();
   initDisplay();
@@ -96,13 +101,15 @@ void loop()
   unsigned long cur_time = millis();
   checkEncoderState(cur_time);
   checkSwitchState(cur_time);
-  updateDisplay();
+  updateDeviceState();
 }
 
 // starts communication with IMU and magnetometer
 // and initializes the madgwick filter
 void initIMU()
 {
+  digitalWrite(IMU_POWER, HIGH);
+  // may need to add delay here if IMU doesn't initialize properly
   if (!imu.init())
     Serial.println("failed to initialize IMU");
   imu.enableDefault();
@@ -121,10 +128,12 @@ void initIMU()
 // put IMU into low-power state and stop madgwick filter
 void stopIMU()
 {
-
+  digitalWrite(IMU_POWER, LOW); // power off imu
 }
 
-void updateDisplay()
+// calls the action function for the device's current state and
+// updates the device's state if necessary
+void updateDeviceState()
 {
   // find which option should be highlighted
   int8_t highlighted = encoder_pos_ % cur_state_.num_options;
