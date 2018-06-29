@@ -166,17 +166,22 @@ void selectFromList(int8_t highlighted)
     last_encoder_pos_ = encoder_pos_;
     display_.clearDisplay();
     display_.setCursor(0,0);
-    Serial.print("highlighted option: ");
-    Serial.println(highlighted);
-    for (uint8_t i = 0; i < cur_state_.num_options; i++)
-    {
-      if (i == highlighted)
-        display_.setTextColor(BLACK,WHITE);
-      else
-        display_.setTextColor(WHITE);
-      display_.println(cur_state_.options[i]);
-    }
+    printSelectList(highlighted);
     display_.display();
+  }
+}
+
+void printSelectList(int8_t highlighted)
+{
+  Serial.print("highlighted option: ");
+  Serial.println(highlighted);
+  for (uint8_t i = 0; i < cur_state_.num_options; i++)
+  {
+    if (i == highlighted)
+      display_.setTextColor(BLACK,WHITE);
+    else
+      display_.setTextColor(WHITE);
+    display_.println(cur_state_.options[i]);
   }
 }
 
@@ -205,7 +210,7 @@ void checkSwitchState(unsigned long cur_time)
   {
     if (digitalRead(ENCODER_SWITCH) == LOW)
     {
-      switch_pressed_ = true;
+     switch_pressed_ = true;
       last_switch_time_ = cur_time;
       Serial.println("switch press detected");
     }
@@ -239,7 +244,11 @@ void orientFilter(int8_t highlighted)
   }
   if (millis() - last_filter_pub_ >= filter_pub_time_)
   {
-    publishOrientation();
+    display_.clearDisplay();
+    display_.setCursor(0,0);
+    printOrientation();
+    printSelectList(highlighted);
+    display_.display();
   }
 }
 
@@ -257,9 +266,7 @@ stateNode initStates()
   stateNode auto_orient;
   stateNode manual_orient;
   stateNode orient_help;
-  stateNode mode_next_states[] = {auto_orient, manual_orient, orient_help};
-
-  orient_mode.next_states = &mode_next_states;
+  orient_mode.next_states = {auto_orient, manual_orient, orient_help};
 
   stateNode dead_end;
   char dead_end_text[][] = {{"nothing here"}};
@@ -270,9 +277,11 @@ stateNode initStates()
 
   auto_orient.num_options = 1;
   auto_orient.init = &initIMU;
+  char auto_orient_options[][] = {{"1) alignment complete"},
+                                  {"2) help"}}
   auto_orient.action = &orientFilter;
   auto_orient.end = &stopIMU; // needs to be implemented
-  auto_orient.next_states = &dead_end;
+  auto_orient.next_states = {dead_end, orient_help};
 
   char manual_orient_msg[][] = {{"align the hinge axis"},
                                 {"with the pole star"},
@@ -388,10 +397,8 @@ void updateMadgwick()
   last_filter_update_ += filter_update_time_;
 }
 
-void publishOrientation()
+void printOrientation()
 {
-  display_.clearDisplay();
-  display_.setCursor(0,0);
   display_.print("roll: ");
   display_.println(roll_);
   display_.print("pitch: ");
@@ -399,7 +406,6 @@ void publishOrientation()
   display_.print("yaw: ");
   display_.println(yaw_);
   display_.println();
-  display_.println("Press enter to continue.");
 
   last_filter_pub_ += filter_pub_time_;
 }
