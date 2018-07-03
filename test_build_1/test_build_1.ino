@@ -73,7 +73,7 @@ Madgwick filter_;
  
 struct stateNode
 {
-  char (*disp_options)[max_lines_][chars_per_line_];
+  char disp_options[max_lines_][chars_per_line_];
   uint8_t num_options;
   uint8_t num_lines;
   stateNode *next_states[5];
@@ -151,7 +151,7 @@ void updateDeviceState()
     disp_state_change_ = true;
     if (cur_state_.end_func != NULL)
       cur_state_.end_func();
-    cur_state_ = (*cur_state_.next_states)[highlighted];
+    cur_state_ = *cur_state_.next_states[highlighted];
     if (cur_state_.init_func != NULL)
       cur_state_.init_func();
     encoder_pos_ = 0;
@@ -176,7 +176,7 @@ void selectFromList(int8_t highlighted)
         display_.setTextColor(BLACK,WHITE);
       else
         display_.setTextColor(WHITE);
-      display_.println((*cur_state_.disp_options)[i]);
+      display_.println(cur_state_.disp_options[i]);
     }
     display_.display();
   }
@@ -227,7 +227,7 @@ void displayText(int8_t highlighted)
   display_.clearDisplay();
   display_.setCursor(0,0);
   for (int i = 0; i < cur_state_.num_lines; i++)
-    display_.println((*cur_state_.disp_options)[i]);
+    display_.println(cur_state_.disp_options[i]);
   display_.display();
 }
 
@@ -248,11 +248,9 @@ void orientFilter(int8_t highlighted)
 stateNode initStates()
 {
   stateNode orient_node;
-  char orient_options[max_lines_][chars_per_line_];
-  addText(orient_options[0],"1) automatic orientation");
-  addText(orient_options[1],"2) manual orientation");
-  addText(orient_options[2],"3) help");
-  orient_node.disp_options = &orient_options;
+  strcpy(orient_node.disp_options[0],"1) automatic orientation");
+  strcpy(orient_node.disp_options[1],"2) manual orientation");
+  strcpy(orient_node.disp_options[2],"3) help");
   orient_node.num_lines = 3;
   orient_node.num_options = 3;
   orient_node.action = &selectFromList;
@@ -267,9 +265,7 @@ stateNode initStates()
   orient_node.next_states[2] = &orient_help;
 
   stateNode dead_end;
-  char dead_end_text[max_lines_][chars_per_line_];
-  addText(dead_end_text[0],"nothing here");
-  dead_end.disp_options = &dead_end_text; 
+  strcpy(dead_end.disp_options[0],"nothing here");
   dead_end.num_options = 1;
   dead_end.num_lines = 1;
   dead_end.action = &displayText;
@@ -283,11 +279,9 @@ stateNode initStates()
   auto_orient.end_func = &stopIMU; // needs to be implemented
   auto_orient.next_states[0] = &dead_end;
 
-  char manual_orient_msg[max_lines_][chars_per_line_]; 
-  addText(manual_orient_msg[0], "align the hinge axis");
-  addText(manual_orient_msg[1], "with the pole star");
-  addText(manual_orient_msg[2], "and press OK");
-  manual_orient.disp_options = &manual_orient_msg;
+  strcpy(manual_orient.disp_options[0], "align the hinge axis");
+  strcpy(manual_orient.disp_options[1], "with the pole star");
+  strcpy(manual_orient.disp_options[2], "and press OK");
   manual_orient.num_options = 1;
   manual_orient.num_lines = 3;
   manual_orient.action = &displayText;
@@ -295,9 +289,7 @@ stateNode initStates()
   manual_orient.end_func = NULL;
   manual_orient.next_states[0] = &dead_end;
 
-  char orient_help_msg[max_lines_][chars_per_line_];
-  addText(orient_help_msg[0], "orient help stub");
-  orient_help.disp_options = &orient_help_msg;
+  strcpy(orient_help.disp_options[0], "orient help stub");
   orient_help.num_options = 1;
   orient_help.num_lines = 1;
   orient_help.action = &displayText;
