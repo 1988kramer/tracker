@@ -44,6 +44,8 @@ bool switch_pressed_;
 
 Adafruit_SSD1305 display_(OLED_MOSI, OLED_CLK, OLED_DC, OLED_RESET, OLED_CS);
 bool disp_state_change_;
+const uint8_t chars_per_line_ = 25;
+const uint8_t max_lines_ = 3;
 
 
 /* - - - - - - - Madgwick Filter Variables - - - - - - - - - */
@@ -68,17 +70,17 @@ Madgwick filter_;
  * information, pointers to possible next states, and
  * a function pointer defining the behavior of that node.
  */
-
+ 
 struct stateNode
 {
-  sateNode() : init(NULL), end(NULL) {}
-  char disp_options[][];
+  char (*disp_options)[max_lines_][chars_per_line_];
   uint8_t num_options;
   uint8_t num_lines;
-  stateNode *next_states;
+  stateNode *next_states[5];
   void (*action)(int8_t);
-  void (*init)(void);
-  void (*end)(void);
+  void (*init_func)(void);
+  void (*end_func)(void);
+  //sateNode() : init_func(NULL), end_func(NULL) {}
 };
 
 stateNode cur_state_;
@@ -110,15 +112,15 @@ void initIMU()
 {
   digitalWrite(IMU_POWER, HIGH);
   // may need to add delay here if IMU doesn't initialize properly
-  if (!imu.init())
+  if (!imu_.init())
     Serial.println("failed to initialize IMU");
-  imu.enableDefault();
+  imu_.enableDefault();
 
-  if (!mag.init())
+  if (!mag_.init())
     Serial.println("failed to initialize magnetometer");
-  mag.enableDefault();
+  mag_.enableDefault();
 
-  filter.begin(FILTER_UPDATE_HZ);
+  filter_.begin(FILTER_UPDATE_HZ);
   filter_update_time_ = 1000000/ FILTER_UPDATE_HZ;
   filter_pub_time_ = 1000 / FILTER_PUB_HZ;
   last_filter_update_ = micros();
@@ -147,11 +149,11 @@ void updateDeviceState()
   {
     switch_pressed_ = false;
     disp_state_change_ = true;
-    if (cur_state_.end != NULL)
-      cur_state_.end();
-    cur_state_ = cur_state_.next_states[highlighted];
-    if (cur_state_.init != NULL)
-      cur_state_.init();
+    if (cur_state_.end_func != NULL)
+      cur_state_.end_func();
+    cur_state_ = (*cur_state_.next_states)[highlighted];
+    if (cur_state_.init_func != NULL)
+      cur_state_.init_func();
     encoder_pos_ = 0;
   }
 }
@@ -174,7 +176,7 @@ void selectFromList(int8_t highlighted)
         display_.setTextColor(BLACK,WHITE);
       else
         display_.setTextColor(WHITE);
-      display_.println(cur_state_.options[i]);
+      display_.println((*cur_state_.disp_options)[i]);
     }
     display_.display();
   }
@@ -225,7 +227,7 @@ void displayText(int8_t highlighted)
   display_.clearDisplay();
   display_.setCursor(0,0);
   for (int i = 0; i < cur_state_.num_lines; i++)
-    display_.println(cur_state_.options[i]);
+    display_.println((*cur_state_.disp_options)[i]);
   display_.display();
 }
 
@@ -246,51 +248,71 @@ void orientFilter(int8_t highlighted)
 stateNode initStates()
 {
   stateNode orient_node;
-  char orient_options[][] = {{"1) automatic orientation\0"},
-                             {"2) manual orientation\0"},
-                             {"3) help"}};
-  orient_node.options = orient_options;
+  char orient_options[max_lines_][chars_per_line_];
+  addText(orient_options[0],"1) automatic orientation");
+  addText(orient_options[1],"2) manual orientation");
+  addText(orient_options[2],"3) help");
+  orient_node.disp_options = &orient_options;
   orient_node.num_lines = 3;
   orient_node.num_options = 3;
   orient_node.action = &selectFromList;
+  orient_node.init_func = NULL;
+  orient_node.end_func = NULL;
 
   stateNode auto_orient;
   stateNode manual_orient;
   stateNode orient_help;
-  stateNode mode_next_states[] = {auto_orient, manual_orient, orient_help};
-
-  orient_mode.next_states = &mode_next_states;
+  orient_node.next_states[0] = &auto_orient;
+  orient_node.next_states[1] = &manual_orient;
+  orient_node.next_states[2] = &orient_help;
 
   stateNode dead_end;
-  char dead_end_text[][] = {{"nothing here"}};
-  dead_end.options = dead_end_text; 
+  char dead_end_text[max_lines_][chars_per_line_];
+  addText(dead_end_text[0],"nothing here");
+  dead_end.disp_options = &dead_end_text; 
   dead_end.num_options = 1;
   dead_end.num_lines = 1;
   dead_end.action = &displayText;
+  dead_end.init_func = NULL;
+  dead_end.end_func = NULL;
+  dead_end.next_states[0] = &dead_end;
 
   auto_orient.num_options = 1;
-  auto_orient.init = &initIMU;
+  auto_orient.init_func = &initIMU;
   auto_orient.action = &orientFilter;
-  auto_orient.end = &stopIMU; // needs to be implemented
-  auto_orient.next_states = &dead_end;
+  auto_orient.end_func = &stopIMU; // needs to be implemented
+  auto_orient.next_states[0] = &dead_end;
 
-  char manual_orient_msg[][] = {{"align the hinge axis"},
-                                {"with the pole star"},
-                                {"and press OK"}};
-  manual_orient.options = manual_orient_msg;
+  char manual_orient_msg[max_lines_][chars_per_line_]; 
+  addText(manual_orient_msg[0], "align the hinge axis");
+  addText(manual_orient_msg[1], "with the pole star");
+  addText(manual_orient_msg[2], "and press OK");
+  manual_orient.disp_options = &manual_orient_msg;
   manual_orient.num_options = 1;
   manual_orient.num_lines = 3;
   manual_orient.action = &displayText;
-  manual_orient.next_states = &dead_end;
+  manual_orient.init_func = NULL;
+  manual_orient.end_func = NULL;
+  manual_orient.next_states[0] = &dead_end;
 
-  char orient_help_msg[][] = {{"help message stub"}};
-  orient_help.options = orient_help_msg;
+  char orient_help_msg[max_lines_][chars_per_line_];
+  addText(orient_help_msg[0], "orient help stub");
+  orient_help.disp_options = &orient_help_msg;
   orient_help.num_options = 1;
   orient_help.num_lines = 1;
   orient_help.action = &displayText;
-  orient_help.next_states = &orient_node;
+  orient_help.init_func = NULL;
+  orient_help.end_func = NULL;
+  orient_help.next_states[0] = &orient_node;
 
   return orient_node;
+}
+
+void addText(char *line, char *input)
+{
+  memset(line, '\0', chars_per_line_);
+  for (int i = 0; i < strlen(input); i++)
+    line[i] = input[i];
 }
 
 void initDisplay()
@@ -381,9 +403,9 @@ void updateMadgwick()
   
   filter_.update(g_x, g_y, g_z, a_x, a_y, a_z, m_x, m_y, m_z);
 
-  roll_ = filter.getRoll();
-  pitch_ = filter.getPitch();
-  yaw_ = filter.getYaw();
+  roll_ = filter_.getRoll();
+  pitch_ = filter_.getPitch();
+  yaw_ = filter_.getYaw();
 
   last_filter_update_ += filter_update_time_;
 }
@@ -407,24 +429,24 @@ void publishOrientation()
 // converts raw accelerometer output to g's
 void convertRawAccel(float &x, float &y, float &z)
 {
-  x = (float)imu.a.x * accel_scale_;
-  y = (float)imu.a.y * accel_scale_;
-  z = (float)imu.a.z * accel_scale_;
+  x = (float)imu_.a.x * accel_scale_;
+  y = (float)imu_.a.y * accel_scale_;
+  z = (float)imu_.a.z * accel_scale_;
 }
 
 // converts raw gyro output to deg/sec
 void convertRawGyro(float &x, float &y, float &z)
 {
-  x = (float)imu.g.x * gyro_scale_;
-  y = (float)imu.g.y * gyro_scale_;
-  z = (float)imu.g.z * gyro_scale_;
+  x = (float)imu_.g.x * gyro_scale_;
+  y = (float)imu_.g.y * gyro_scale_;
+  z = (float)imu_.g.z * gyro_scale_;
 }
 
 // converts raw magnetometer output to gauss
 void convertRawMag(float &x, float &y, float &z)
 {
-  x = (float)mag.m.x / mag_scale_;
-  y = (float)mag.m.y / mag_scale_;
-  z = (float)mag.m.z / mag_scale_;
+  x = (float)mag_.m.x / mag_scale_;
+  y = (float)mag_.m.y / mag_scale_;
+  z = (float)mag_.m.z / mag_scale_;
 }
 
