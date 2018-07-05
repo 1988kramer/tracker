@@ -44,6 +44,8 @@ bool switch_pressed_;
 
 Adafruit_SSD1305 display_(OLED_MOSI, OLED_CLK, OLED_DC, OLED_RESET, OLED_CS);
 bool disp_state_change_;
+const uint8_t chars_per_line_ = 25;
+const uint8_t max_lines_ = 3;
 
 
 /* - - - - - - - Madgwick Filter Variables - - - - - - - - - */
@@ -68,30 +70,44 @@ Madgwick filter_;
  * information, pointers to possible next states, and
  * a function pointer defining the behavior of that node.
  */
+typedef void (*actionFunction)(int8_t highlighted);
+typedef void (*initFunction)();
+typedef void (*endFunction)();
 
-struct stateNode
+typedef struct
 {
-  sateNode() : init(NULL), end(NULL) {}
-  char disp_options[][];
+  char disp_options[max_lines_][chars_per_line_];
   uint8_t num_options;
   uint8_t num_lines;
-  stateNode *next_states;
-  void (*action)(int8_t);
-  void (*init)(void);
-  void (*end)(void);
-};
+  stateNode *next_states[5];
+  actionFunction action;
+  initFunction init_func;
+  endFunction end_func;
+  //sateNode() : init_func(NULL), end_func(NULL) {}
+} stateNode;
 
-stateNode cur_state_;
+stateNode *cur_state_;
 
 void setup() 
 {
   Serial.begin(9600);
   Serial.println("Testing user interface with orientation filter");
   digitalWrite(IMU_POWER, LOW); // start with IMU off 
+  Serial.println("Initializing Encoder");
   initEncoder();
-  initIMU();
+  Serial.println("Initializing display");
   initDisplay();
+  Serial.println("initializing states");
   cur_state_ = initStates();
+  //cur_state_ = initStatePointers();
+
+  // check if function pointers work like I think they do
+  actionFunction test = NULL;
+  if (actionFunction != NULL)
+    Serial.println("test function is not null somehow");
+  else
+    Serial.println("test function is null");
+
   delay(500);
 }
 
@@ -99,7 +115,6 @@ void loop()
 {
   // need to add filter update step
   unsigned long cur_time = millis();
-  checkEncoderState(cur_time);
   checkSwitchState(cur_time);
   updateDeviceState();
 }
@@ -110,15 +125,15 @@ void initIMU()
 {
   digitalWrite(IMU_POWER, HIGH);
   // may need to add delay here if IMU doesn't initialize properly
-  if (!imu.init())
+  if (!imu_.init())
     Serial.println("failed to initialize IMU");
-  imu.enableDefault();
+  imu_.enableDefault();
 
-  if (!mag.init())
+  if (!mag_.init())
     Serial.println("failed to initialize magnetometer");
-  mag.enableDefault();
+  mag_.enableDefault();
 
-  filter.begin(FILTER_UPDATE_HZ);
+  filter_.begin(FILTER_UPDATE_HZ);
   filter_update_time_ = 1000000/ FILTER_UPDATE_HZ;
   filter_pub_time_ = 1000 / FILTER_PUB_HZ;
   last_filter_update_ = micros();
@@ -136,22 +151,36 @@ void stopIMU()
 void updateDeviceState()
 {
   // find which option should be highlighted
-  int8_t highlighted = encoder_pos_ % cur_state_.num_options;
+  int8_t highlighted = encoder_pos_ % cur_state_->num_options;
   if (highlighted < 0)
-    highlighted += cur_state_.num_options;
+    highlighted += cur_state_->num_options;
 
-  cur_state_.action(highlighted);
+  cur_state_->action(highlighted);
 
   // advance state if switch is pressed
   if (switch_pressed_)
   {
+    Serial.println("resetting switch state");
     switch_pressed_ = false;
     disp_state_change_ = true;
-    if (cur_state_.end != NULL)
-      cur_state_.end();
-    cur_state_ = cur_state_.next_states[highlighted];
-    if (cur_state_.init != NULL)
-      cur_state_.init();
+    /*
+    if (cur_state_->end_func != NULL)
+    {
+      Serial.println("running state end func");
+      cur_state_->end_func();
+    }
+    */
+    Serial.println("advancing state");
+    cur_state_ = cur_state_->next_states[highlighted];
+    Serial.println(cur_state_->disp_options[0]);
+    delay(100);
+    /*
+    if (cur_state_->init_func != NULL)
+    {
+      Serial.println("running state end func");
+      cur_state_->init_func();
+    }
+    */
     encoder_pos_ = 0;
   }
 }
@@ -175,18 +204,19 @@ void printSelectList(int8_t highlighted)
 {
   Serial.print("highlighted option: ");
   Serial.println(highlighted);
-  for (uint8_t i = 0; i < cur_state_.num_options; i++)
+  for (uint8_t i = 0; i < cur_state_->num_options; i++)
   {
     if (i == highlighted)
       display_.setTextColor(BLACK,WHITE);
     else
       display_.setTextColor(WHITE);
-    display_.println(cur_state_.options[i]);
+    display_.println(cur_state_->disp_options[i]);
   }
 }
 
-void checkEncoderState(unsigned long cur_time)
+void checkEncoderState()
 {
+  unsigned long cur_time = millis();
   if (cur_time - last_encoder_time_ > enc_bounce_time_)
   {
     uint8_t enc_a_state = digitalRead(ENCODER_A);
@@ -227,11 +257,17 @@ void checkSwitchState(unsigned long cur_time)
 
 void displayText(int8_t highlighted)
 {
-  display_.clearDisplay();
-  display_.setCursor(0,0);
-  for (int i = 0; i < cur_state_.num_lines; i++)
-    display_.println(cur_state_.options[i]);
-  display_.display();
+  if (disp_state_change_)
+  {
+    Serial.println("displaying text");
+    delay(100);
+    display_.clearDisplay();
+    display_.setCursor(0,0);
+    for (int i = 0; i < cur_state_->num_lines; i++)
+      display_.println(cur_state_->disp_options[i]);
+    display_.display();
+    disp_state_change_ = false;
+  }
 }
 
 void orientFilter(int8_t highlighted)
@@ -252,52 +288,117 @@ void orientFilter(int8_t highlighted)
   }
 }
 
-stateNode initStates()
+stateNode* initStates()
 {
   stateNode orient_node;
-  char orient_options[][] = {{"1) automatic orientation\0"},
-                             {"2) manual orientation\0"},
-                             {"3) help"}};
-  orient_node.options = orient_options;
+  strcpy(orient_node.disp_options[0],"1) automatic orientation");
+  strcpy(orient_node.disp_options[1],"2) manual orientation");
+  strcpy(orient_node.disp_options[2],"3) help");
   orient_node.num_lines = 3;
   orient_node.num_options = 3;
-  orient_node.action = &selectFromList;
+  orient_node.action = selectFromList;
+  orient_node.init_func = NULL;
+  orient_node.end_func = NULL;
 
   stateNode auto_orient;
   stateNode manual_orient;
   stateNode orient_help;
-  orient_mode.next_states = {auto_orient, manual_orient, orient_help};
+
+  orient_node.next_states[0] = &auto_orient;
+  orient_node.next_states[1] = &manual_orient;
+  orient_node.next_states[2] = &orient_help;
 
   stateNode dead_end;
-  char dead_end_text[][] = {{"nothing here"}};
-  dead_end.options = dead_end_text; 
+  strcpy(dead_end.disp_options[0],"nothing here");
   dead_end.num_options = 1;
   dead_end.num_lines = 1;
-  dead_end.action = &displayText;
+  dead_end.action = displayText;
+  dead_end.init_func = NULL;
+  dead_end.end_func = NULL;
+  dead_end.next_states[0] = &dead_end;
 
   auto_orient.num_options = 1;
-  auto_orient.init = &initIMU;
-  char auto_orient_options[][] = {{"1) alignment complete"},
-                                  {"2) help"}}
-  auto_orient.action = &orientFilter;
-  auto_orient.end = &stopIMU; // needs to be implemented
-  auto_orient.next_states = {dead_end, orient_help};
 
-  char manual_orient_msg[][] = {{"align the hinge axis"},
-                                {"with the pole star"},
-                                {"and press OK"}};
-  manual_orient.options = manual_orient_msg;
+  auto_orient.init_func = initIMU;
+  auto_orient.action = orientFilter;
+  auto_orient.end_func = stopIMU; // needs to be implemented
+  auto_orient.next_states[0] = &dead_end;
+
+  strcpy(manual_orient.disp_options[0], "align the hinge axis");
+  strcpy(manual_orient.disp_options[1], "with the pole star");
+  strcpy(manual_orient.disp_options[2], "and press OK");
   manual_orient.num_options = 1;
   manual_orient.num_lines = 3;
-  manual_orient.action = &displayText;
-  manual_orient.next_states = &dead_end;
+  manual_orient.action = displayText;
+  manual_orient.init_func = NULL;
+  manual_orient.end_func = NULL;
+  manual_orient.next_states[0] = &dead_end;
 
-  char orient_help_msg[][] = {{"help message stub"}};
-  orient_help.options = orient_help_msg;
+  strcpy(orient_help.disp_options[0], "orient help stub");
   orient_help.num_options = 1;
   orient_help.num_lines = 1;
-  orient_help.action = &displayText;
-  orient_help.next_states = &orient_node;
+  orient_help.action = displayText;
+  orient_help.init_func = NULL;
+  orient_help.end_func = NULL;
+  orient_help.next_states[0] = &orient_node;
+
+  return &orient_node;
+  //return orient_help;
+}
+
+stateNode* initStatePointers()
+{
+  stateNode *orient_node = new stateNode();
+  strcpy(orient_node->disp_options[0],"1) automatic orientation");
+  strcpy(orient_node->disp_options[1],"2) manual orientation");
+  strcpy(orient_node->disp_options[2],"3) help");
+  orient_node->num_lines = 3;
+  orient_node->num_options = 3;
+  orient_node->action = selectFromList;
+  orient_node->init_func = NULL;
+  orient_node->end_func = NULL;
+
+  stateNode *auto_orient = new stateNode();
+  stateNode *manual_orient = new stateNode();
+  stateNode *orient_help = new stateNode();
+
+  orient_node.next_states[0] = auto_orient;
+  orient_node.next_states[1] = manual_orient;
+  orient_node.next_states[2] = orient_help;
+
+  stateNode *dead_end;
+  strcpy(dead_end->disp_options[0],"nothing here");
+  dead_end->num_options = 1;
+  dead_end->num_lines = 1;
+  dead_end->action = displayText;
+  dead_end->init_func = NULL;
+  dead_end->end_func = NULL;
+  dead_end->next_states[0] = dead_end;
+
+  auto_orient->num_options = 1;
+
+  auto_orient->init_func = initIMU;
+  auto_orient->action = orientFilter;
+  auto_orient->end_func = stopIMU; // needs to be implemented
+  auto_orient->next_states[0] = dead_end;
+
+  strcpy(manual_orient->disp_options[0], "align the hinge axis");
+  strcpy(manual_orient->disp_options[1], "with the pole star");
+  strcpy(manual_orient->disp_options[2], "and press OK");
+  manual_orient->num_options = 1;
+  manual_orient->num_lines = 3;
+  manual_orient->action = displayText;
+  manual_orient->init_func = NULL;
+  manual_orient->end_func = NULL;
+  manual_orient->next_states[0] = dead_end;
+
+  strcpy(orient_help->disp_options[0], "orient help stub");
+  orient_help->num_options = 1;
+  orient_help->num_lines = 1;
+  orient_help->action = displayText;
+  orient_help->init_func = NULL;
+  orient_help->end_func = NULL;
+  orient_help->next_states[0] = orient_node;
 
   return orient_node;
 }
@@ -322,6 +423,10 @@ void initEncoder()
   pinMode(ENCODER_A, INPUT_PULLUP);
   pinMode(ENCODER_B, INPUT_PULLUP);
   pinMode(ENCODER_SWITCH, INPUT_PULLUP);
+
+  // set interrupt functions
+  attachInterrupt(0, checkEncoderState, CHANGE);
+  attachInterrupt(1, checkEncoderState, CHANGE);
 
   // initialize encoder variables
   encoder_pos_ = 0;
@@ -390,9 +495,9 @@ void updateMadgwick()
   
   filter_.update(g_x, g_y, g_z, a_x, a_y, a_z, m_x, m_y, m_z);
 
-  roll_ = filter.getRoll();
-  pitch_ = filter.getPitch();
-  yaw_ = filter.getYaw();
+  roll_ = filter_.getRoll();
+  pitch_ = filter_.getPitch();
+  yaw_ = filter_.getYaw();
 
   last_filter_update_ += filter_update_time_;
 }
@@ -413,24 +518,24 @@ void printOrientation()
 // converts raw accelerometer output to g's
 void convertRawAccel(float &x, float &y, float &z)
 {
-  x = (float)imu.a.x * accel_scale_;
-  y = (float)imu.a.y * accel_scale_;
-  z = (float)imu.a.z * accel_scale_;
+  x = (float)imu_.a.x * accel_scale_;
+  y = (float)imu_.a.y * accel_scale_;
+  z = (float)imu_.a.z * accel_scale_;
 }
 
 // converts raw gyro output to deg/sec
 void convertRawGyro(float &x, float &y, float &z)
 {
-  x = (float)imu.g.x * gyro_scale_;
-  y = (float)imu.g.y * gyro_scale_;
-  z = (float)imu.g.z * gyro_scale_;
+  x = (float)imu_.g.x * gyro_scale_;
+  y = (float)imu_.g.y * gyro_scale_;
+  z = (float)imu_.g.z * gyro_scale_;
 }
 
 // converts raw magnetometer output to gauss
 void convertRawMag(float &x, float &y, float &z)
 {
-  x = (float)mag.m.x / mag_scale_;
-  y = (float)mag.m.y / mag_scale_;
-  z = (float)mag.m.z / mag_scale_;
+  x = (float)mag_.m.x / mag_scale_;
+  y = (float)mag_.m.y / mag_scale_;
+  z = (float)mag_.m.z / mag_scale_;
 }
 

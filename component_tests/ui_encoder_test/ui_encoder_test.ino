@@ -16,11 +16,10 @@
 #define OLED_RESET 24
 
 // encoder variables
-int encoder_pos;
+volatile int encoder_pos;
 int last_encoder_pos;
-uint8_t last_a_state;
-uint8_t last_b_state;
-unsigned long last_encoder_time;
+volatile uint8_t last_a_state, last_b_state;
+volatile unsigned long last_encoder_time;
 unsigned long last_switch_time;
 const uint8_t enc_bounce_time = 10;
 const uint8_t switch_bounce_time = 200;
@@ -40,7 +39,6 @@ void setup()
 void loop() 
 {
   unsigned long cur_time = millis();
-  checkEncoderState(cur_time);
   checkSwitchState(cur_time);
   updateDisplay();
 }
@@ -49,12 +47,13 @@ void updateDisplay()
 {
   if (switch_pressed)
     encoder_pos = 0;
-  uint8_t num_options = 3;
-  int8_t highlighted = encoder_pos % num_options;
-  if (highlighted < 0)
-    highlighted += num_options;
+  uint8_t num_options = 7;
   if (encoder_pos != last_encoder_pos)
   {
+    Serial.println("updating display");
+    int8_t highlighted = encoder_pos % num_options;
+    if (highlighted < 0)
+      highlighted += num_options;
     last_encoder_pos = encoder_pos;
     display.clearDisplay();
     display.setCursor(0,0);
@@ -74,8 +73,9 @@ void updateDisplay()
   }
 }
 
-void checkEncoderState(unsigned long cur_time)
+void checkEncoderState()
 {
+  unsigned long cur_time = millis();
   if (cur_time - last_encoder_time > enc_bounce_time)
   {
     uint8_t enc_a_state = digitalRead(ENCODER_A);
@@ -90,6 +90,8 @@ void checkEncoderState(unsigned long cur_time)
       encoderBUpdate(enc_a_state, enc_b_state);
       last_encoder_time = cur_time;
     }
+    Serial.print("last encoder state: ");
+    Serial.println(last_encoder_pos);
   }
 }
 
@@ -129,6 +131,10 @@ void initEncoder()
   pinMode(ENCODER_A, INPUT_PULLUP);
   pinMode(ENCODER_B, INPUT_PULLUP);
   pinMode(ENCODER_SWITCH, INPUT_PULLUP);
+
+  // set interrupt functions
+  attachInterrupt(0, checkEncoderState, CHANGE);
+  attachInterrupt(1, checkEncoderState, CHANGE);
 
   // initialize encoder variables
   encoder_pos = 0;
