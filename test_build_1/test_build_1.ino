@@ -38,6 +38,7 @@ unsigned long last_switch_time_;
 const uint8_t enc_bounce_time_ = 10;
 const uint8_t switch_bounce_time_ = 200;
 bool switch_pressed_;
+bool last_state_printed_;
 
 
 /* - - - - - - - - OLED display variables - - - - - - - - - - */
@@ -74,7 +75,7 @@ typedef void (*actionFunction)(int8_t highlighted);
 typedef void (*initFunction)();
 typedef void (*endFunction)();
 
-typedef struct
+typedef struct stateNode
 {
   char disp_options[max_lines_][chars_per_line_];
   uint8_t num_options;
@@ -84,7 +85,7 @@ typedef struct
   initFunction init_func;
   endFunction end_func;
   //sateNode() : init_func(NULL), end_func(NULL) {}
-} stateNode;
+};
 
 stateNode *cur_state_;
 
@@ -98,17 +99,9 @@ void setup()
   Serial.println("Initializing display");
   initDisplay();
   Serial.println("initializing states");
-  cur_state_ = initStates();
-  //cur_state_ = initStatePointers();
-
-  // check if function pointers work like I think they do
-  actionFunction test = NULL;
-  if (actionFunction != NULL)
-    Serial.println("test function is not null somehow");
-  else
-    Serial.println("test function is null");
-
-  delay(500);
+  //cur_state_ = initStates();
+  cur_state_ = initStatePointers();
+  Serial.println("states initialized");
 }
 
 void loop() 
@@ -154,8 +147,16 @@ void updateDeviceState()
   int8_t highlighted = encoder_pos_ % cur_state_->num_options;
   if (highlighted < 0)
     highlighted += cur_state_->num_options;
+  if (encoder_pos_ != last_encoder_pos_)
+  {
+    Serial.print("encoder pos: ");
+    Serial.println(encoder_pos_);
+    Serial.print("highlighted option: ");
+    Serial.println(highlighted);
+  }
 
   cur_state_->action(highlighted);
+  last_encoder_pos_ = encoder_pos_;
 
   // advance state if switch is pressed
   if (switch_pressed_)
@@ -163,24 +164,21 @@ void updateDeviceState()
     Serial.println("resetting switch state");
     switch_pressed_ = false;
     disp_state_change_ = true;
-    /*
+
     if (cur_state_->end_func != NULL)
     {
       Serial.println("running state end func");
       cur_state_->end_func();
     }
-    */
+
     Serial.println("advancing state");
     cur_state_ = cur_state_->next_states[highlighted];
-    Serial.println(cur_state_->disp_options[0]);
-    delay(100);
-    /*
+
     if (cur_state_->init_func != NULL)
     {
       Serial.println("running state end func");
       cur_state_->init_func();
     }
-    */
     encoder_pos_ = 0;
   }
 }
@@ -192,7 +190,6 @@ void selectFromList(int8_t highlighted)
   {
     if (disp_state_change_)
       disp_state_change_ = false;
-    last_encoder_pos_ = encoder_pos_;
     display_.clearDisplay();
     display_.setCursor(0,0);
     printSelectList(highlighted);
@@ -202,8 +199,6 @@ void selectFromList(int8_t highlighted)
 
 void printSelectList(int8_t highlighted)
 {
-  Serial.print("highlighted option: ");
-  Serial.println(highlighted);
   for (uint8_t i = 0; i < cur_state_->num_options; i++)
   {
     if (i == highlighted)
@@ -212,6 +207,7 @@ void printSelectList(int8_t highlighted)
       display_.setTextColor(WHITE);
     display_.println(cur_state_->disp_options[i]);
   }
+  display_.setTextColor(WHITE);
 }
 
 void checkEncoderState()
@@ -231,6 +227,13 @@ void checkEncoderState()
       encoderBUpdate(enc_a_state, enc_b_state);
       last_encoder_time_ = cur_time;
     }
+    last_state_printed_ = false;
+  }
+  if (!last_state_printed_)
+  {
+    Serial.print("Last encoder state ");
+    Serial.println(last_encoder_pos_);
+    last_state_printed_ = true;
   }
 }
 
@@ -260,7 +263,6 @@ void displayText(int8_t highlighted)
   if (disp_state_change_)
   {
     Serial.println("displaying text");
-    delay(100);
     display_.clearDisplay();
     display_.setCursor(0,0);
     for (int i = 0; i < cur_state_->num_lines; i++)
@@ -288,64 +290,6 @@ void orientFilter(int8_t highlighted)
   }
 }
 
-stateNode* initStates()
-{
-  stateNode orient_node;
-  strcpy(orient_node.disp_options[0],"1) automatic orientation");
-  strcpy(orient_node.disp_options[1],"2) manual orientation");
-  strcpy(orient_node.disp_options[2],"3) help");
-  orient_node.num_lines = 3;
-  orient_node.num_options = 3;
-  orient_node.action = selectFromList;
-  orient_node.init_func = NULL;
-  orient_node.end_func = NULL;
-
-  stateNode auto_orient;
-  stateNode manual_orient;
-  stateNode orient_help;
-
-  orient_node.next_states[0] = &auto_orient;
-  orient_node.next_states[1] = &manual_orient;
-  orient_node.next_states[2] = &orient_help;
-
-  stateNode dead_end;
-  strcpy(dead_end.disp_options[0],"nothing here");
-  dead_end.num_options = 1;
-  dead_end.num_lines = 1;
-  dead_end.action = displayText;
-  dead_end.init_func = NULL;
-  dead_end.end_func = NULL;
-  dead_end.next_states[0] = &dead_end;
-
-  auto_orient.num_options = 1;
-
-  auto_orient.init_func = initIMU;
-  auto_orient.action = orientFilter;
-  auto_orient.end_func = stopIMU; // needs to be implemented
-  auto_orient.next_states[0] = &dead_end;
-
-  strcpy(manual_orient.disp_options[0], "align the hinge axis");
-  strcpy(manual_orient.disp_options[1], "with the pole star");
-  strcpy(manual_orient.disp_options[2], "and press OK");
-  manual_orient.num_options = 1;
-  manual_orient.num_lines = 3;
-  manual_orient.action = displayText;
-  manual_orient.init_func = NULL;
-  manual_orient.end_func = NULL;
-  manual_orient.next_states[0] = &dead_end;
-
-  strcpy(orient_help.disp_options[0], "orient help stub");
-  orient_help.num_options = 1;
-  orient_help.num_lines = 1;
-  orient_help.action = displayText;
-  orient_help.init_func = NULL;
-  orient_help.end_func = NULL;
-  orient_help.next_states[0] = &orient_node;
-
-  return &orient_node;
-  //return orient_help;
-}
-
 stateNode* initStatePointers()
 {
   stateNode *orient_node = new stateNode();
@@ -362,11 +306,11 @@ stateNode* initStatePointers()
   stateNode *manual_orient = new stateNode();
   stateNode *orient_help = new stateNode();
 
-  orient_node.next_states[0] = auto_orient;
-  orient_node.next_states[1] = manual_orient;
-  orient_node.next_states[2] = orient_help;
+  orient_node->next_states[0] = auto_orient;
+  orient_node->next_states[1] = manual_orient;
+  orient_node->next_states[2] = orient_help;
 
-  stateNode *dead_end;
+  stateNode *dead_end = new stateNode();
   strcpy(dead_end->disp_options[0],"nothing here");
   dead_end->num_options = 1;
   dead_end->num_lines = 1;
@@ -381,7 +325,7 @@ stateNode* initStatePointers()
   auto_orient->action = orientFilter;
   auto_orient->end_func = stopIMU; // needs to be implemented
   auto_orient->next_states[0] = dead_end;
-
+  
   strcpy(manual_orient->disp_options[0], "align the hinge axis");
   strcpy(manual_orient->disp_options[1], "with the pole star");
   strcpy(manual_orient->disp_options[2], "and press OK");
@@ -436,6 +380,7 @@ void initEncoder()
   last_encoder_time_ = millis();
   last_switch_time_ = millis();
   switch_pressed_ = false;
+  last_state_printed_ = false;
 }
 
 void encoderAUpdate(uint8_t enc_a_state, uint8_t enc_b_state)
@@ -455,8 +400,6 @@ void encoderAUpdate(uint8_t enc_a_state, uint8_t enc_b_state)
     else
       encoder_pos_--;
   }
-  Serial.print("encoder updated to: ");
-  Serial.println(encoder_pos_);
 }
 
 void encoderBUpdate(uint8_t enc_a_state, uint8_t enc_b_state)
@@ -476,8 +419,6 @@ void encoderBUpdate(uint8_t enc_a_state, uint8_t enc_b_state)
     else
       encoder_pos_--;
   }
-  Serial.print("encoder updated to: ");
-  Serial.println(encoder_pos_);
 }
 
 void updateMadgwick()
