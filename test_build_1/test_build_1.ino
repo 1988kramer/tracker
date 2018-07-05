@@ -70,16 +70,19 @@ Madgwick filter_;
  * information, pointers to possible next states, and
  * a function pointer defining the behavior of that node.
  */
- 
+typedef void (*actionFunction)(int8_t highlighted);
+typedef void (*initFunction)();
+typedef void (*endFunction)();
+
 struct stateNode
 {
   char disp_options[max_lines_][chars_per_line_];
   uint8_t num_options;
   uint8_t num_lines;
   stateNode *next_states[5];
-  void (*action)(int8_t);
-  void (*init_func)(void);
-  void (*end_func)(void);
+  actionFunction action;
+  initFunction init_func;
+  endFunction end_func;
   //sateNode() : init_func(NULL), end_func(NULL) {}
 };
 
@@ -90,9 +93,11 @@ void setup()
   Serial.begin(9600);
   Serial.println("Testing user interface with orientation filter");
   digitalWrite(IMU_POWER, LOW); // start with IMU off 
+  Serial.println("Initializing Encoder");
   initEncoder();
-  initIMU();
+  Serial.println("Initializing display");
   initDisplay();
+  Serial.println("initializing states");
   cur_state_ = initStates();
   delay(500);
 }
@@ -147,13 +152,27 @@ void updateDeviceState()
   // advance state if switch is pressed
   if (switch_pressed_)
   {
+    Serial.println("resetting switch state");
     switch_pressed_ = false;
     disp_state_change_ = true;
+    /*
     if (cur_state_.end_func != NULL)
+    {
+      Serial.println("running state end func");
       cur_state_.end_func();
-    cur_state_ = *cur_state_.next_states[highlighted];
+    }
+    */
+    Serial.println("advancing state");
+    cur_state_ = *(cur_state_.next_states[highlighted]);
+    Serial.println(cur_state_.disp_options[0]);
+    delay(100);
+    /*
     if (cur_state_.init_func != NULL)
+    {
+      Serial.println("running state end func");
       cur_state_.init_func();
+    }
+    */
     encoder_pos_ = 0;
   }
 }
@@ -224,11 +243,17 @@ void checkSwitchState(unsigned long cur_time)
 
 void displayText(int8_t highlighted)
 {
-  display_.clearDisplay();
-  display_.setCursor(0,0);
-  for (int i = 0; i < cur_state_.num_lines; i++)
-    display_.println(cur_state_.disp_options[i]);
-  display_.display();
+  if (disp_state_change_)
+  {
+    Serial.println("displaying text");
+    delay(100);
+    display_.clearDisplay();
+    display_.setCursor(0,0);
+    for (int i = 0; i < cur_state_.num_lines; i++)
+      display_.println(cur_state_.disp_options[i]);
+    display_.display();
+    disp_state_change_ = false;
+  }
 }
 
 void orientFilter(int8_t highlighted)
@@ -253,7 +278,7 @@ stateNode initStates()
   strcpy(orient_node.disp_options[2],"3) help");
   orient_node.num_lines = 3;
   orient_node.num_options = 3;
-  orient_node.action = &selectFromList;
+  orient_node.action = selectFromList;
   orient_node.init_func = NULL;
   orient_node.end_func = NULL;
 
@@ -268,15 +293,15 @@ stateNode initStates()
   strcpy(dead_end.disp_options[0],"nothing here");
   dead_end.num_options = 1;
   dead_end.num_lines = 1;
-  dead_end.action = &displayText;
+  dead_end.action = displayText;
   dead_end.init_func = NULL;
   dead_end.end_func = NULL;
   dead_end.next_states[0] = &dead_end;
 
   auto_orient.num_options = 1;
-  auto_orient.init_func = &initIMU;
-  auto_orient.action = &orientFilter;
-  auto_orient.end_func = &stopIMU; // needs to be implemented
+  auto_orient.init_func = initIMU;
+  auto_orient.action = orientFilter;
+  auto_orient.end_func = stopIMU; // needs to be implemented
   auto_orient.next_states[0] = &dead_end;
 
   strcpy(manual_orient.disp_options[0], "align the hinge axis");
@@ -284,7 +309,7 @@ stateNode initStates()
   strcpy(manual_orient.disp_options[2], "and press OK");
   manual_orient.num_options = 1;
   manual_orient.num_lines = 3;
-  manual_orient.action = &displayText;
+  manual_orient.action = displayText;
   manual_orient.init_func = NULL;
   manual_orient.end_func = NULL;
   manual_orient.next_states[0] = &dead_end;
@@ -292,19 +317,13 @@ stateNode initStates()
   strcpy(orient_help.disp_options[0], "orient help stub");
   orient_help.num_options = 1;
   orient_help.num_lines = 1;
-  orient_help.action = &displayText;
+  orient_help.action = displayText;
   orient_help.init_func = NULL;
   orient_help.end_func = NULL;
   orient_help.next_states[0] = &orient_node;
 
   return orient_node;
-}
-
-void addText(char *line, char *input)
-{
-  memset(line, '\0', chars_per_line_);
-  for (int i = 0; i < strlen(input); i++)
-    line[i] = input[i];
+  //return orient_help;
 }
 
 void initDisplay()
