@@ -176,7 +176,7 @@ void updateDeviceState()
 
     if (cur_state_->init_func != NULL)
     {
-      Serial.println("running state end func");
+      Serial.println("running state init func");
       cur_state_->init_func();
     }
     encoder_pos_ = 0;
