@@ -45,7 +45,7 @@ bool last_state_printed_;
 
 Adafruit_SSD1305 display_(OLED_MOSI, OLED_CLK, OLED_DC, OLED_RESET, OLED_CS);
 bool disp_state_change_;
-const uint8_t chars_per_line_ = 25;
+const uint8_t chars_per_line_ = 21;
 const uint8_t max_lines_ = 3;
 
 
@@ -71,9 +71,8 @@ Madgwick filter_;
  * information, pointers to possible next states, and
  * a function pointer defining the behavior of that node.
  */
-typedef void (*actionFunction)(int8_t highlighted);
-typedef void (*initFunction)();
-typedef void (*endFunction)();
+
+typedef void (*stateFunction)();
 
 typedef struct stateNode
 {
@@ -81,13 +80,14 @@ typedef struct stateNode
   uint8_t num_options;
   uint8_t num_lines;
   stateNode *next_states[5];
-  actionFunction action;
-  initFunction init_func;
-  endFunction end_func;
+  stateFunction action;
+  stateFunction init_func;
+  stateFunction end_func;
   //sateNode() : init_func(NULL), end_func(NULL) {}
 };
 
 stateNode *cur_state_;
+uint8_t highlighted_state_;
 
 void setup() 
 {
@@ -99,7 +99,6 @@ void setup()
   Serial.println("Initializing display");
   initDisplay();
   Serial.println("initializing states");
-  //cur_state_ = initStates();
   cur_state_ = initStatePointers();
   Serial.println("states initialized");
 }
@@ -116,21 +115,30 @@ void loop()
 // and initializes the madgwick filter
 void initIMU()
 {
+  Serial.println("powering on IMU");
   digitalWrite(IMU_POWER, HIGH);
   // may need to add delay here if IMU doesn't initialize properly
   if (!imu_.init())
+  {
     Serial.println("failed to initialize IMU");
+    Serial.flush();
+  }
   imu_.enableDefault();
 
   if (!mag_.init())
+  {
     Serial.println("failed to initialize magnetometer");
+    Serial.flush();
+  }
   mag_.enableDefault();
 
+  Serial.println("starting madgwick filter");
   filter_.begin(FILTER_UPDATE_HZ);
   filter_update_time_ = 1000000/ FILTER_UPDATE_HZ;
   filter_pub_time_ = 1000 / FILTER_PUB_HZ;
   last_filter_update_ = micros();
   last_filter_pub_ = millis();
+  Serial.println("IMU initialized!");
 }
 
 // put IMU into low-power state and stop madgwick filter
@@ -144,18 +152,15 @@ void stopIMU()
 void updateDeviceState()
 {
   // find which option should be highlighted
-  int8_t highlighted = encoder_pos_ % cur_state_->num_options;
-  if (highlighted < 0)
-    highlighted += cur_state_->num_options;
   if (encoder_pos_ != last_encoder_pos_)
   {
     Serial.print("encoder pos: ");
     Serial.println(encoder_pos_);
     Serial.print("highlighted option: ");
-    Serial.println(highlighted);
+    Serial.println(highlighted_state_);
   }
 
-  cur_state_->action(highlighted);
+  cur_state_->action();
   last_encoder_pos_ = encoder_pos_;
 
   // advance state if switch is pressed
@@ -172,7 +177,7 @@ void updateDeviceState()
     }
 
     Serial.println("advancing state");
-    cur_state_ = cur_state_->next_states[highlighted];
+    cur_state_ = cur_state_->next_states[highlighted_state_];
 
     if (cur_state_->init_func != NULL)
     {
@@ -180,10 +185,11 @@ void updateDeviceState()
       cur_state_->init_func();
     }
     encoder_pos_ = 0;
+    highlighted_state_ = 0;
   }
 }
 
-void selectFromList(int8_t highlighted)
+void selectFromList()
 {
   // update the display only if the display state has changed
   if (encoder_pos_ != last_encoder_pos_ || disp_state_change_)
@@ -192,16 +198,16 @@ void selectFromList(int8_t highlighted)
       disp_state_change_ = false;
     display_.clearDisplay();
     display_.setCursor(0,0);
-    printSelectList(highlighted);
+    printSelectList();
     display_.display();
   }
 }
 
-void printSelectList(int8_t highlighted)
+void printSelectList()
 {
   for (uint8_t i = 0; i < cur_state_->num_options; i++)
   {
-    if (i == highlighted)
+    if (i == highlighted_state_)
       display_.setTextColor(BLACK,WHITE);
     else
       display_.setTextColor(WHITE);
@@ -227,13 +233,15 @@ void checkEncoderState()
       encoderBUpdate(enc_a_state, enc_b_state);
       last_encoder_time_ = cur_time;
     }
-    last_state_printed_ = false;
-  }
-  if (!last_state_printed_)
-  {
-    Serial.print("Last encoder state ");
-    Serial.println(last_encoder_pos_);
-    last_state_printed_ = true;
+
+    highlighted_state_ = encoder_pos_ % cur_state_->num_options;
+  	if (highlighted_state_ < 0)
+    	highlighted_state_ += cur_state_->num_options;
+
+    Serial.print("encoder updated to: ");
+    Serial.println(encoder_pos_);
+    Serial.print("highlighted option: ");
+    Serial.println(highlighted_state_);
   }
 }
 
@@ -258,7 +266,7 @@ void checkSwitchState(unsigned long cur_time)
   */
 }
 
-void displayText(int8_t highlighted)
+void displayText()
 {
   if (disp_state_change_)
   {
@@ -272,7 +280,7 @@ void displayText(int8_t highlighted)
   }
 }
 
-void orientFilter(int8_t highlighted)
+void orientFilter()
 {
   // Need to add functions to initialize IMU when needed
   // and sleep the imu when not needed
@@ -282,10 +290,11 @@ void orientFilter(int8_t highlighted)
   }
   if (millis() - last_filter_pub_ >= filter_pub_time_)
   {
+  	disp_state_change_ = true;
     display_.clearDisplay();
     display_.setCursor(0,0);
     printOrientation();
-    printSelectList(highlighted);
+    displayText();
     display_.display();
   }
 }
@@ -293,8 +302,8 @@ void orientFilter(int8_t highlighted)
 stateNode* initStatePointers()
 {
   stateNode *orient_node = new stateNode();
-  strcpy(orient_node->disp_options[0],"1) automatic orientation");
-  strcpy(orient_node->disp_options[1],"2) manual orientation");
+  strcpy(orient_node->disp_options[0],"1) auto orient");
+  strcpy(orient_node->disp_options[1],"2) manual orient");
   strcpy(orient_node->disp_options[2],"3) help");
   orient_node->num_lines = 3;
   orient_node->num_options = 3;
@@ -320,7 +329,9 @@ stateNode* initStatePointers()
   dead_end->next_states[0] = dead_end;
 
   auto_orient->num_options = 1;
+  auto_orient->num_lines = 1;
 
+  strcpy(auto_orient->disp_options[0], "press OK when done");
   auto_orient->init_func = initIMU;
   auto_orient->action = orientFilter;
   auto_orient->end_func = stopIMU; // needs to be implemented
