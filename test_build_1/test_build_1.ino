@@ -29,8 +29,8 @@
 
 /* - - - - - - - - - encoder variables - - - - - - - - - - */
 
-int encoder_pos_;
-int last_encoder_pos_;
+uint8_t encoder_pos_;
+uint8_t last_encoder_pos_;
 uint8_t last_a_state_;
 uint8_t last_b_state_;
 unsigned long last_encoder_time_;
@@ -87,7 +87,7 @@ typedef struct stateNode
 };
 
 stateNode *cur_state_;
-uint8_t highlighted_state_;
+volatile uint8_t highlighted_state_;
 
 void setup() 
 {
@@ -115,16 +115,18 @@ void loop()
 // and initializes the madgwick filter
 void initIMU()
 {
-  Serial.println("powering on IMU");
-  digitalWrite(IMU_POWER, HIGH);
+  //Serial.println("powering on IMU");
+  //digitalWrite(IMU_POWER, HIGH);
   // may need to add delay here if IMU doesn't initialize properly
+  delay(1000);
+  Serial.println("initializing IMU");
   if (!imu_.init())
   {
     Serial.println("failed to initialize IMU");
     Serial.flush();
   }
   imu_.enableDefault();
-
+  Serial.println("initializing magnetometer");
   if (!mag_.init())
   {
     Serial.println("failed to initialize magnetometer");
@@ -270,14 +272,18 @@ void displayText()
 {
   if (disp_state_change_)
   {
-    Serial.println("displaying text");
     display_.clearDisplay();
     display_.setCursor(0,0);
-    for (int i = 0; i < cur_state_->num_lines; i++)
-      display_.println(cur_state_->disp_options[i]);
+    printText();
     display_.display();
     disp_state_change_ = false;
   }
+}
+
+void printText()
+{
+  for (int i = 0; i < cur_state_->num_lines; i++)
+    display_.println(cur_state_->disp_options[i]);
 }
 
 void orientFilter()
@@ -294,7 +300,7 @@ void orientFilter()
     display_.clearDisplay();
     display_.setCursor(0,0);
     printOrientation();
-    displayText();
+    printText();
     display_.display();
   }
 }
