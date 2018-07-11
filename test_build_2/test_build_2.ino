@@ -1,3 +1,4 @@
+#include <NMEAGPS.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -5,8 +6,6 @@
 #include <LIS3MDL.h>
 #include <LSM6.h>
 #include "MadgwickAHRS.h"
-#include <NMEAGPS.h>
-#include <GPSport.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <SD.h>
@@ -69,6 +68,7 @@ Madgwick filter_;
 
 /* - - - - - - - - - - GPS Variables - - - - - - - - - - - */
 
+#include <GPSport.h>
 static NMEAGPS gps;
 int latitude_, longitude_;
 
@@ -107,8 +107,10 @@ volatile int8_t highlighted_state_;
 void setup() 
 {
   DEBUG_PORT.begin(9600);
+  while(!DEBUG_PORT);
   DEBUG_PORT.println("Testing user interface with orientation filter");
-  digitalWrite(GPS_ENABLE_PIN, LOW); // start with GPS off
+  digitalWrite(GPS_ENABLE_PIN, HIGH); // start with GPS off
+  gpsPort.begin(9600);
   DEBUG_PORT.println("Initializing Encoder");
   initEncoder();
   DEBUG_PORT.println("Initializing display");
@@ -440,7 +442,6 @@ void endGPS()
 
 void updateGPS()
 {
-  DEBUG_PORT.println("updating GPS");
   while (gps.available(gpsPort))
   {
     DEBUG_PORT.println("printing GPS status");
