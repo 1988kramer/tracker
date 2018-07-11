@@ -18,10 +18,6 @@
 #define OLED_DC         28
 #define OLED_RESET      24
 
-// IMU pins
-#define IMU_POWER      18 // need to actually connect this one
-                          // IMU only draws 5mA so this should be safe
-
 // Madgwick filter constants
 #define FILTER_UPDATE_HZ   100
 #define FILTER_PUB_HZ      1
@@ -29,8 +25,8 @@
 
 /* - - - - - - - - - encoder variables - - - - - - - - - - */
 
-uint8_t encoder_pos_;
-uint8_t last_encoder_pos_;
+int8_t encoder_pos_;
+int8_t last_encoder_pos_;
 uint8_t last_a_state_;
 uint8_t last_b_state_;
 unsigned long last_encoder_time_;
@@ -87,13 +83,12 @@ typedef struct stateNode
 };
 
 stateNode *cur_state_;
-volatile uint8_t highlighted_state_;
+volatile int8_t highlighted_state_;
 
 void setup() 
 {
   Serial.begin(9600);
-  Serial.println("Testing user interface with orientation filter");
-  digitalWrite(IMU_POWER, LOW); // start with IMU off 
+  Serial.println("Testing user interface with orientation filter"); 
   Serial.println("Initializing Encoder");
   initEncoder();
   Serial.println("Initializing display");
@@ -115,10 +110,6 @@ void loop()
 // and initializes the madgwick filter
 void initIMU()
 {
-  //Serial.println("powering on IMU");
-  //digitalWrite(IMU_POWER, HIGH);
-  // may need to add delay here if IMU doesn't initialize properly
-  delay(1000);
   Serial.println("initializing IMU");
   if (!imu_.init())
   {
