@@ -137,7 +137,7 @@ void initIMU()
 // put IMU into low-power state and stop madgwick filter
 void stopIMU()
 {
-  digitalWrite(IMU_POWER, LOW); // power off imu
+  
 }
 
 // calls the action function for the device's current state and

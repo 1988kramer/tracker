@@ -28,7 +28,7 @@
 #define FILTER_PUB_HZ      1
 
 // GPS module constants
-#define GPS_ENABLE_PIN 18
+#define GPS_ENABLE_PIN 19
 
 
 /* - - - - - - - - - encoder variables - - - - - - - - - - */
@@ -440,8 +440,12 @@ void endGPS()
 
 void updateGPS()
 {
+  DEBUG_PORT.println("updating GPS");
   while (gps.available(gpsPort))
+  {
+    DEBUG_PORT.println("printing GPS status");
     printGPSStatus(gps.read());
+  }
 }
 
 static void printGPSStatus(const gps_fix &fix)
