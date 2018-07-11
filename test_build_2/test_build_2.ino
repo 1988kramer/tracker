@@ -6,6 +6,7 @@
 #include <LSM6.h>
 #include "MadgwickAHRS.h"
 #include <NMEAGPS.h>
+#include <GPSport.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <SD.h>
@@ -25,6 +26,9 @@
 // Madgwick filter constants
 #define FILTER_UPDATE_HZ   100
 #define FILTER_PUB_HZ      1
+
+// GPS module constants
+#define GPS_ENABLE_PIN 18
 
 
 /* - - - - - - - - - encoder variables - - - - - - - - - - */
@@ -71,7 +75,7 @@ int latitude_, longitude_;
 
 /* - - - - - - - - - SD Card Variables - - - - - - - - - - */
 
-
+float declination_;
 
 
 /* - - - - - - - - State Control Structure - - - - - - - - */
@@ -104,7 +108,7 @@ void setup()
 {
   DEBUG_PORT.begin(9600);
   DEBUG_PORT.println("Testing user interface with orientation filter");
-  digitalWrite(IMU_POWER, LOW); // start with IMU off 
+  digitalWrite(GPS_ENABLE_PIN, LOW); // start with GPS off
   DEBUG_PORT.println("Initializing Encoder");
   initEncoder();
   DEBUG_PORT.println("Initializing display");
@@ -192,11 +196,6 @@ void updateDeviceState()
   }
 }
 
-void updateGPS()
-{
-
-}
-
 void selectFromList()
 {
   // update the display only if the display state has changed
@@ -259,7 +258,7 @@ void checkSwitchState(unsigned long cur_time)
   {
     if (digitalRead(ENCODER_SWITCH) == LOW)
     {
-      if (cur_state->switch_active)
+      if (cur_state_->switch_active)
       	advance_state_ = true;
       last_switch_time_ = cur_time;
       DEBUG_PORT.println("switch press detected");
@@ -426,7 +425,66 @@ void initEncoder()
 
 void initGPS()
 {
+  DEBUG_PORT.println("enabling gps");
+  digitalWrite(GPS_ENABLE_PIN, HIGH);
+  delay(100);
+  DEBUG_PORT.println("beginning communication with gps");
 	gpsPort.begin(9600);
+  DEBUG_PORT.println("gps initialized");
+}
+
+void endGPS()
+{
+  digitalWrite(GPS_ENABLE_PIN, LOW);
+}
+
+void updateGPS()
+{
+  while (gps.available(gpsPort))
+    printGPSStatus(gps.read());
+}
+
+static void printGPSStatus(const gps_fix &fix)
+{
+  if (fix.valid.location)
+  {
+    DEBUG_PORT.println("gps fix acquired");
+    display_.clearDisplay();
+    display_.setCursor(0,0);
+    display_.println("gps fix acquired");
+    display_.print("latitude: ");
+    display_.println(fix.latitude());
+    display_.print("longitude: ");
+    display_.println(fix.longitude());
+    display_.display();
+    delay(1000);
+    longitude_ = fix.longitude();
+    latitude_ = fix.longitude();
+    advance_state_ = true;
+  }
+  else
+  {
+    DEBUG_PORT.println("waiting for gps fix");
+    display_.clearDisplay();
+    display_.setCursor(0,0);
+    printText();
+    display_.display();
+  }
+}
+
+void initSD()
+{
+  
+}
+
+void endSD()
+{
+  
+}
+
+void lookupDeclination()
+{
+  
 }
 
 void encoderAUpdate(uint8_t enc_a_state, uint8_t enc_b_state)
