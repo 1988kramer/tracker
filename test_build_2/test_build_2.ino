@@ -109,8 +109,10 @@ void setup()
   DEBUG_PORT.begin(9600);
   while(!DEBUG_PORT);
   DEBUG_PORT.println("Testing user interface with orientation filter");
-  digitalWrite(GPS_ENABLE_PIN, HIGH); // start with GPS off
-  gpsPort.begin(9600);
+  pinMode(GPS_ENABLE_PIN, OUTPUT);
+  digitalWrite(GPS_ENABLE_PIN,LOW); // start with GPS disabled
+  //digitalWrite(GPS_ENABLE_PIN, HIGH); // start with GPS on
+  //gpsPort.begin(9600);
   DEBUG_PORT.println("Initializing Encoder");
   initEncoder();
   DEBUG_PORT.println("Initializing display");
