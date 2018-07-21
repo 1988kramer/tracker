@@ -1,3 +1,6 @@
+#include<SD.h>
+
+
 /* - - - - - - - - - SD Card Reader Pins - - - - - - - - */
 
 #define SD_CS_PIN 29 // chip select pin
