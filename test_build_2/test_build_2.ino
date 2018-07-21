@@ -3,12 +3,11 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1305.h>
-#include <LIS3MDL.h>
-#include <LSM6.h>
-#include "MadgwickAHRS.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <SD.h>
+
+#include "Motor.h"
+#include "DecLookup.h"
 
 // encoder_pins
 #define ENCODER_A       10
@@ -22,22 +21,8 @@
 #define OLED_DC         28
 #define OLED_RESET      24
 
-// Madgwick filter constants
-#define FILTER_UPDATE_HZ   100
-#define FILTER_PUB_HZ      1
-
 // GPS module constants
 #define GPS_ENABLE_PIN 19
-
-// SD card chip select pin
-#define SD_CS_PIN 29
-
-// motor control pins
-#define LIMIT_SWITCH_PIN 20
-#define MOTOR_ENC_A      2
-#define MOTOR_ENC_B      1
-#define MOTOR_PWM        3
-#define MOTOR_DIR_PIN    0
 
 
 /* - - - - - - - - - encoder variables - - - - - - - - - - */
@@ -62,49 +47,11 @@ const uint8_t chars_per_line_ = 21;
 const uint8_t max_lines_ = 3;
 
 
-/* - - - - - - - Madgwick Filter Variables - - - - - - - - - */
-
-unsigned long filter_update_time_;
-unsigned long last_filter_update_;
-unsigned long last_filter_pub_;
-unsigned long filter_pub_time_;
-const float accel_scale_ = 0.000061;
-const float gyro_scale_ = 0.00875;
-const float mag_scale_ = 6482;
-float roll_, pitch_, yaw_;
-LIS3MDL mag_;
-LSM6 imu_;
-Madgwick filter_;
-
 /* - - - - - - - - - - GPS Variables - - - - - - - - - - - */
 
 #include <GPSport.h>
 static NMEAGPS gps;
 int latitude_, longitude_;
-
-
-/* - - - - - - - - - SD Card Variables - - - - - - - - - - */
-
-float declination_;
-
-
-/* - - - - - - - - - Motor Control Variables - - - - - - - */
-
-int exposure_time_ = 0;
-volatile long motor_count_;
-long new_motor_count_, old_motor_count_;
-const double kP_ = 0.018;
-const double kI_ = 0.00005;
-const double kD_ = 0.0001;
-
-unsigned long last_pid_update_time_;
-double last_pid_speed_;
-double last_speed_;
-double set_point_;
-int pwm_setting_;
-double i_term_;
-const int pid_delta_t_target_ = 250;
-unsigned long motor_start_time_;
 
 
 /* - - - - - - - - State Control Structure - - - - - - - - */
@@ -164,34 +111,6 @@ void loop()
   unsigned long cur_time = millis();
   checkSwitchState(cur_time);
   updateDeviceState();
-}
-
-// starts communication with IMU and magnetometer
-// and initializes the madgwick filter
-void initIMU()
-{
-  DEBUG_PORT.println("initializing IMU");
-  if (!imu_.init())
-  {
-    DEBUG_PORT.println("failed to initialize IMU");
-    DEBUG_PORT.flush();
-  }
-  imu_.enableDefault();
-  DEBUG_PORT.println("initializing magnetometer");
-  if (!mag_.init())
-  {
-    DEBUG_PORT.println("failed to initialize magnetometer");
-    DEBUG_PORT.flush();
-  }
-  mag_.enableDefault();
-
-  DEBUG_PORT.println("starting madgwick filter");
-  filter_.begin(FILTER_UPDATE_HZ);
-  filter_update_time_ = 1000000/ FILTER_UPDATE_HZ;
-  filter_pub_time_ = 1000 / FILTER_PUB_HZ;
-  last_filter_update_ = micros();
-  last_filter_pub_ = millis();
-  DEBUG_PORT.println("IMU initialized!");
 }
 
 // calls the action function for the device's current state and
@@ -324,25 +243,6 @@ void printText()
     display_.println(cur_state_->disp_options[i]);
 }
 
-void orientFilter()
-{
-  // Need to add functions to initialize IMU when needed
-  // and sleep the imu when not needed
-  if (micros() - last_filter_update_ >= filter_update_time_)
-  {
-    updateMadgwick();
-  }
-  if (millis() - last_filter_pub_ >= filter_pub_time_)
-  {
-  	disp_state_change_ = true;
-    display_.clearDisplay();
-    display_.setCursor(0,0);
-    printOrientation();
-    printText();
-    display_.display();
-  }
-}
-
 void initDisplay()
 {
   display_.begin();
@@ -430,98 +330,6 @@ static void printGPSStatus(const gps_fix &fix)
   }
 }
 
-void strAppend(char *str1, uint8_t size1, char *str2, uint8_t size2)
-{
-  uint8_t index1 = 0;
-  uint8_t index2 = 0;
-  while (index1 < size1 && str1[index1] != '\0')
-  {
-    index1++;
-  }
-  while (index1 < size1 && index2 < size2 && str2[index2] != '\0')
-  {
-    str1[index1++] = str2[index2++];
-  }
-}
-
-void getFileName(int8_t lat, int8_t lon, int year, char *filename, uint8_t name_size)
-{
-  uint8_t str_size = 10;
-  memset(filename, '\0', name_size);
-  
-  char year_str[str_size];
-  memset(year_str, '\0', str_size);
-  itoa(year, year_str, 10);
-  strAppend(filename, name_size, year_str, str_size);
-  strAppend(filename, name_size, "_0/", 3);
-
-  char lat_str[str_size];
-  memset(lat_str, '\0', str_size);
-  itoa(abs(lat), lat_str, 10);
-
-  if (lat < 0)
-    strAppend(filename, name_size, "n", 1);
-  strAppend(filename, name_size, lat_str, str_size);
-
-  strAppend(filename, name_size, ".csv", 4);
-}
-
-void readLine(char *buf, File dec_file)
-{
-  int index = 0;
-  do 
-  {
-    buf[index++] = dec_file.read();
-  } while (dec_file.peek() != '\n');
-}
-
-void initSD()
-{
-  if (!SD.begin(SD_CS_PIN))
-    DEBUG_PORT.println("SD card initialization failed");
-  DEBUG_PORT.println("SD card initialized");
-}
-
-void lookupDeclination()
-{
-  // hardcoding latitude and longitude until GPS is working
-  latitude_ = 40;
-  longitude_ = -105;
-  int year = 2018;
-  char filename[40];
-  memset(filename, '\0', 40);
-  getFileName(latitude_, longitude_, year, filename, 40);
-
-  File dec_file;
-  dec_file = SD.open(filename, FILE_READ);
-
-  if (dec_file)
-  {
-    DEBUG_PORT.print("file ");
-    DEBUG_PORT.print(filename);
-    DEBUG_PORT.println(" opened successfully");
-    bool target_found = false;
-    while (dec_file.available() && !target_found)
-    {
-      char line[25];
-      memset(line, '\0', 25);
-      readLine(line, dec_file);
-      char *token = strtok(line, ",");
-      int8_t this_lat = atoi(token);
-      token = strtok(NULL, ",");
-      int8_t this_lon = atoi(token);
-      token = strtok(NULL, ",");
-      declination_ = atof(token);
-
-      target_found = (this_lat == latitude_ && 
-                      this_lon == longitude_);
-    }
-    advance_state_ = true;
-    DEBUG_PORT.println("found declination");
-  }
-  DEBUG_PORT.println("unable to find declination");
-}
-
 void setExposure()
 {
   if (disp_state_change_ || encoder_pos_ != last_encoder_pos_)
@@ -579,185 +387,6 @@ void encoderBUpdate(uint8_t enc_a_state, uint8_t enc_b_state)
   }
 }
 
-void updateMadgwick()
-{
-  float a_x, a_y, a_z;
-  float g_x, g_y, g_z;
-  float m_x, m_y, m_z;
-   
-  mag_.read();
-  imu_.read();
-    
-  convertRawAccel(a_x,a_y,a_z);
-  convertRawGyro(g_x,g_y,g_z);
-  convertRawMag(m_x,m_y,m_z);
-  
-  filter_.update(g_x, g_y, g_z, a_x, a_y, a_z, m_x, m_y, m_z);
-
-  roll_ = filter_.getRoll();
-  pitch_ = filter_.getPitch();
-  yaw_ = filter_.getYaw();
-
-  last_filter_update_ += filter_update_time_;
-}
-
-void printOrientation()
-{
-  display_.print("roll: ");
-  display_.println(roll_);
-  display_.println("target: 0.0");
-
-  int8_t target_pitch = -1 * latitude_;
-  display_.print("pitch: ");
-  display_.println(pitch_);
-  display_.print("target: ");
-  display_.println(target_pitch);
-  
-  display_.print("yaw: ");
-  display_.println(yaw_);
-  display_.print("target: ");
-  display_.println(declination_);
-  display_.println();
-
-  last_filter_pub_ += filter_pub_time_;
-}
-
-// converts raw accelerometer output to g's
-void convertRawAccel(float &x, float &y, float &z)
-{
-  x = (float)imu_.a.x * accel_scale_;
-  y = (float)imu_.a.y * accel_scale_;
-  z = (float)imu_.a.z * accel_scale_;
-}
-
-// converts raw gyro output to deg/sec
-void convertRawGyro(float &x, float &y, float &z)
-{
-  x = (float)imu_.g.x * gyro_scale_;
-  y = (float)imu_.g.y * gyro_scale_;
-  z = (float)imu_.g.z * gyro_scale_;
-}
-
-// converts raw magnetometer output to gauss
-void convertRawMag(float &x, float &y, float &z)
-{
-  x = (float)mag_.m.x / mag_scale_;
-  y = (float)mag_.m.y / mag_scale_;
-  z = (float)mag_.m.z / mag_scale_;
-}
-
-void updatePID()
-{
-  unsigned long cur_time = millis();
-  if (cur_time - last_pid_update_time_ >= pid_delta_t_target_)
-  {
-    double deltaT = (double)(cur_time - last_pid_update_time_) / 1000.0;
-    double cur_speed = getSpeed(deltaT);
-    updatePWM(cur_speed);
-    analogWrite(MOTOR_PWM, pwm_setting_);
-    last_pid_update_time_ = cur_time;
-  }
-}
-
-double getSpeed(double deltaT)
-{
-  old_motor_count_ = new_motor_count_;
-  new_motor_count_ = motor_count_;
-  int difference = new_motor_count_ - old_motor_count_;
-  if (difference < 0) difference *= -1;
-  double cur_speed;
-  if (difference < 50000)
-  {
-    cur_speed = (double)difference / deltaT;
-    last_speed_ = cur_speed;
-  }
-  else
-  {
-    cur_speed = last_speed_;
-  }
-  return cur_speed;
-}
-
-void updatePWM(double cur_speed)
-{
-  double error = set_point_ - cur_speed;
-  i_term_ += kI_ * error;
-  double d_input = cur_speed - last_pid_speed_;
-  int adjustment = (kP_ * error) + i_term_ - (kD_ * d_input);
-  pwm_setting_ += adjustment;
-  if (pwm_setting_ > 255) pwm_setting_ = 255;
-  else if (pwm_setting_ < 0) pwm_setting_ = 0;
-  last_pid_speed_ = cur_speed;
-}
-
-void resetPIDVars()
-{
-  i_term_ = 0.0;
-  last_speed_ = 0.0;
-  last_pid_speed_ = 0.0;
-  motor_count_ = 0;
-  new_motor_count_ = 0;
-  old_motor_count_ = 0;
-  last_pid_update_time_ = millis();
-}
-void initMotor()
-{
-  digitalWrite(MOTOR_DIR_PIN, HIGH);
-  set_point_ = 98.0;
-  resetPIDVars();
-  
-  motor_start_time_ = millis();
-  display_.clearDisplay();
-  display_.display();
-}
-
-void runMotor()
-{
-  while (millis() - motor_start_time_ < exposure_time_ * 1000)
-    updatePID();
-  advance_state_ = true;
-}
-
-void stopMotor()
-{
-  analogWrite(MOTOR_PWM, 0);
-}
-
-void resetInit()
-{
-  digitalWrite(MOTOR_DIR_PIN, LOW);
-  set_point_ = 800.0;
-  resetPIDVars();
-}
-
-void resetMotor()
-{
-  while(digitalRead(LIMIT_SWITCH_PIN) == HIGH)
-  {
-    updatePID();
-    displayText();
-  }
-  advance_state_ = true;
-}
-
-void readMotorEncoder()
-{
-  if (digitalRead(MOTOR_ENC_A) == HIGH)
-  {
-    if (digitalRead(MOTOR_ENC_B) == LOW)
-      motor_count_++;
-    else
-      motor_count_--;
-  }
-  else
-  {
-    if (digitalRead(MOTOR_ENC_B) == LOW)
-      motor_count_--;
-    else
-      motor_count_++;
-  }
-}
-
 stateNode* initStatePointers()
 {
   stateNode *orient_node = new stateNode();
@@ -795,34 +424,11 @@ stateNode* initStatePointers()
   gps_node->end_func = endGPS; // not yet implemented
   gps_node->switch_active = false;
 
+  initDeclinationNode(dec_lookup);
   dec_lookup->next_states[0] = auto_orient;
-  dec_lookup->num_options = 1;
-  dec_lookup->num_lines = 2;
-  strcpy(dec_lookup->disp_options[0],"finding local");
-  strcpy(dec_lookup->disp_options[1],"magnetic declination");
-  dec_lookup->init_func = initSD; 
-  dec_lookup->action = lookupDeclination;
-  dec_lookup->end_func = NULL;
-  dec_lookup->switch_active = false;
 
-  stateNode *dead_end = new stateNode();
-  strcpy(dead_end->disp_options[0],"nothing here");
-  dead_end->num_options = 1;
-  dead_end->num_lines = 1;
-  dead_end->action = displayText;
-  dead_end->init_func = NULL;
-  dead_end->end_func = NULL;
-  dead_end->next_states[0] = dead_end;
-
-  auto_orient->num_options = 1;
-  auto_orient->num_lines = 3;
-
-  strcpy(auto_orient->disp_options[0], "press OK when done");
-  auto_orient->init_func = initIMU;
-  auto_orient->action = orientFilter;
-  auto_orient->end_func = NULL;
+  initOrientNode(auto_orient);
   auto_orient->next_states[0] = set_exposure;
-  auto_orient->switch_active = true;
   
   strcpy(manual_orient->disp_options[0], "align the hinge axis");
   strcpy(manual_orient->disp_options[1], "with the pole star");
@@ -845,22 +451,11 @@ stateNode* initStatePointers()
   set_exposure->next_states[0] = run_motor;
   set_exposure->switch_active = true;
 
-  run_motor->num_options = 1;
-  run_motor->num_lines = 0;
-  run_motor->init_func = initMotor; // not implemented
-  run_motor->action = runMotor; // not implemented
-  run_motor->end_func = stopMotor;
+  initMotorNode(run_motor);
   run_motor->next_states[0] = reset_motor;
-  run_motor->switch_active = false;
 
-  strcpy(reset_motor->disp_options[0], "resetting motor");
-  reset_motor->num_options = 1;
-  reset_motor->num_lines = 1;
-  reset_motor->init_func = resetInit; // not implemented
-  reset_motor->action = resetMotor; // not implemented
-  reset_motor->end_func = stopMotor;
+  initResetNode(reset_motor);
   reset_motor->next_states[0] = set_exposure;
-  reset_motor->switch_active = false;
 
   strcpy(orient_help->disp_options[0], "orient help stub");
   orient_help->num_options = 1;
