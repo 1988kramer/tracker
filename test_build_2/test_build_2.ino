@@ -698,6 +698,7 @@ void resetPIDVars()
   motor_count_ = 0;
   new_motor_count_ = 0;
   old_motor_count_ = 0;
+  pwm_setting_ = 0;
   last_pid_update_time_ = millis();
 }
 void initMotor()
@@ -780,8 +781,8 @@ stateNode* initStatePointers()
   stateNode *run_motor = new stateNode();
   stateNode *reset_motor = new stateNode();
 
-  //orient_node->next_states[0] = gps_node;
-  orient_node->next_states[0] = dec_lookup;
+  orient_node->next_states[0] = gps_node;
+  //orient_node->next_states[0] = dec_lookup;
   orient_node->next_states[1] = manual_orient;
   orient_node->next_states[2] = orient_help;
 
@@ -791,8 +792,8 @@ stateNode* initStatePointers()
   strcpy(gps_node->disp_options[0],"finding latitude");
   strcpy(gps_node->disp_options[1],"and longitude.");
   gps_node->init_func = initGPS; 
-  gps_node->action = updateGPS; // not yet implemented
-  gps_node->end_func = endGPS; // not yet implemented
+  gps_node->action = updateGPS;
+  gps_node->end_func = endGPS; 
   gps_node->switch_active = false;
 
   dec_lookup->next_states[0] = auto_orient;
