@@ -651,10 +651,6 @@ void updateMadgwick()
 
 void printOrientation()
 {
-  display_.print("roll: ");
-  display_.println(roll_);
-  display_.println("target: 0.0");
-
   int8_t target_pitch = -1 * latitude_;
   display_.print("pitch: ");
   display_.println(pitch_);
