@@ -42,6 +42,9 @@
 // power switch pin
 #define OFF_SWITCH  14
 
+// shutter control pin
+#define SHUTTER_PIN 17
+
 /* - - - - - - - - - encoder variables - - - - - - - - - - */
 
 int8_t encoder_pos_;
@@ -74,6 +77,10 @@ const float accel_scale_ = 0.000061;
 const float gyro_scale_ = 0.00875;
 const float mag_scale_ = 6482;
 float roll_, pitch_, yaw_;
+const float mag_offset_[] = {1809.5, -2592, 6747};
+const float mag_scale_correct_[] = {0.97, 1.014, 1.017};
+const int zero_rate_offset_[] = {265, -837, -360};
+const int zero_gee_offset_[] = {-885, -390, -284};
 LIS3MDL mag_;
 LSM6 imu_;
 Madgwick filter_;
@@ -93,6 +100,8 @@ float declination_;
 /* - - - - - - - - - Motor Control Variables - - - - - - - */
 
 unsigned long exposure_time_ = 0;
+const unsigned long stabilize_time_ = 2000;
+bool exposure_started_ = false;
 volatile long motor_count_;
 long new_motor_count_, old_motor_count_;
 const double kP_ = 0.3;
@@ -166,6 +175,7 @@ void setup()
   pinMode(MOTOR_ENC_B, INPUT);
   pinMode(MOTOR_PWM, OUTPUT);
   pinMode(OFF_SWITCH, OUTPUT);
+  pinMode(SHUTTER_PIN, OUTPUT);
   last_action_time_ = millis();
   timeout_active_ = true;
 }
@@ -553,7 +563,7 @@ void lookupDeclination()
   DEBUG_PORT.println("unable to find declination");
 }
 
-void setExposure()
+void setExposureTime()
 {
   if (disp_state_change_ || encoder_pos_ != last_encoder_pos_)
   {
@@ -571,6 +581,12 @@ void setExposure()
     printText();
     display_.display();
   }
+}
+
+void saveExposureTime()
+{
+  exposure_time_ += 2; // add stabilization time
+  exposure_time_ *= 1000; // convert to milliseconds
 }
 
 void encoderAUpdate(uint8_t enc_a_state, uint8_t enc_b_state)
@@ -657,25 +673,28 @@ void printOrientation()
 // converts raw accelerometer output to g's
 void convertRawAccel(float &x, float &y, float &z)
 {
-  x = (float)imu_.a.x * accel_scale_;
-  y = (float)imu_.a.y * accel_scale_;
-  z = (float)imu_.a.z * accel_scale_;
+  x = ((float)imu_.a.x - (float)zero_gee_offset_[0]) * accel_scale_;
+  y = ((float)imu_.a.y - (float)zero_gee_offset_[1]) * accel_scale_;
+  z = ((float)imu_.a.z - (float)zero_gee_offset_[2]) * accel_scale_;
 }
 
 // converts raw gyro output to deg/sec
 void convertRawGyro(float &x, float &y, float &z)
 {
-  x = (float)imu_.g.x * gyro_scale_;
-  y = (float)imu_.g.y * gyro_scale_;
-  z = (float)imu_.g.z * gyro_scale_;
+  x = ((float)imu_.g.x - (float)zero_rate_offset_[0]) * gyro_scale_;
+  y = ((float)imu_.g.y - (float)zero_rate_offset_[1]) * gyro_scale_;
+  z = ((float)imu_.g.z - (float)zero_rate_offset_[2]) * gyro_scale_;
 }
 
 // converts raw magnetometer output to gauss
 void convertRawMag(float &x, float &y, float &z)
 {
-  x = (float)mag_.m.x / mag_scale_;
-  y = (float)mag_.m.y / mag_scale_;
-  z = (float)mag_.m.z / mag_scale_;
+  float x_raw = ((float)mag_.m.x - mag_offset_[0]) * mag_scale_correct_[0];
+  float y_raw = ((float)mag_.m.y - mag_offset_[1]) * mag_scale_correct_[1];
+  float z_raw = ((float)mag_.m.z - mag_offset_[2]) * mag_scale_correct_[2];
+  x = x_raw / mag_scale_;
+  y = y_raw / mag_scale_;
+  z = z_raw / mag_scale_;
 }
 
 void updatePID()
@@ -750,9 +769,36 @@ void initMotor()
 
 void runMotor()
 {
-  while (millis() - motor_start_time_ < exposure_time_ * 1000)
+  while (millis() - motor_start_time_ < exposure_time_)
     updatePID();
   advance_state_ = true;
+}
+
+void doExposure()
+{
+  unsigned long run_time = millis() - motor_start_time_;
+  if (run_time >= exposure_time_)
+    advance_state_ = true;
+  if (run_time > stabilize_time_
+      && !exposure_started_)
+  {
+    DEBUG_PORT.println("opening shutter");
+    exposure_started_ = true;
+    digitalWrite(SHUTTER_PIN, HIGH);    
+  }
+  updatePID();
+}
+
+void stopExposure()
+{
+  DEBUG_PORT.println("closing shutter");
+  digitalWrite(SHUTTER_PIN, LOW);
+  exposure_started_ = false;
+  delay(50); // leave time for shutter to close
+  analogWrite(MOTOR_PWM, 0);
+  resetPIDVars();
+  timeout_active_ = true;
+  last_action_time_ = millis();
 }
 
 void stopMotor()
@@ -772,12 +818,12 @@ void resetInit()
 
 void resetMotor()
 {
-  while(digitalRead(LIMIT_SWITCH_PIN) == HIGH)
+  if (digitalRead(LIMIT_SWITCH_PIN) == LOW)
   {
-    updatePID();
-    displayText();
+    advance_state_ = true;
   }
-  advance_state_ = true;
+  updatePID();
+  displayText();
 }
 
 void readMotorEncoder()
@@ -873,24 +919,24 @@ stateNode* initStatePointers()
   set_exposure->num_options = 1;
   set_exposure->num_lines = 2;
   set_exposure->init_func = NULL;
-  set_exposure->action = setExposure; 
-  set_exposure->end_func = NULL;
+  set_exposure->action = setExposureTime; 
+  set_exposure->end_func = saveExposureTime;
   set_exposure->next_states[0] = run_motor;
   set_exposure->switch_active = true;
 
   run_motor->num_options = 1;
   run_motor->num_lines = 0;
   run_motor->init_func = initMotor; 
-  run_motor->action = runMotor; 
-  run_motor->end_func = stopMotor;
+  run_motor->action = doExposure; 
+  run_motor->end_func = stopExposure;
   run_motor->next_states[0] = reset_motor;
   run_motor->switch_active = false;
 
   strcpy(reset_motor->disp_options[0], "resetting camera");
   reset_motor->num_options = 1;
   reset_motor->num_lines = 1;
-  reset_motor->init_func = resetInit; 
-  reset_motor->action = resetMotor; 
+  reset_motor->init_func = resetInit;
+  reset_motor->action = resetMotor;
   reset_motor->end_func = stopMotor;
   reset_motor->next_states[0] = set_exposure;
   reset_motor->switch_active = false;
