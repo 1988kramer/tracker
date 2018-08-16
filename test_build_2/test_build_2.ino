@@ -39,6 +39,8 @@
 #define MOTOR_PWM        3
 #define MOTOR_DIR_PIN    0
 
+// power switch pin
+#define OFF_SWITCH  14
 
 /* - - - - - - - - - encoder variables - - - - - - - - - - */
 
@@ -80,7 +82,7 @@ Madgwick filter_;
 
 #include <GPSport.h>
 static NMEAGPS gps;
-int latitude_, longitude_;
+int latitude_, longitude_, year_;
 
 
 /* - - - - - - - - - SD Card Variables - - - - - - - - - - */
@@ -90,12 +92,12 @@ float declination_;
 
 /* - - - - - - - - - Motor Control Variables - - - - - - - */
 
-int exposure_time_ = 0;
+unsigned long exposure_time_ = 0;
 volatile long motor_count_;
 long new_motor_count_, old_motor_count_;
-const double kP_ = 0.018;
-const double kI_ = 0.00005;
-const double kD_ = 0.0001;
+const double kP_ = 0.3;
+const double kI_ = 0.1;
+const double kD_ = 0.005;
 
 unsigned long last_pid_update_time_;
 double last_pid_speed_;
@@ -105,6 +107,13 @@ int pwm_setting_;
 double i_term_;
 const int pid_delta_t_target_ = 250;
 unsigned long motor_start_time_;
+
+
+/* - - - - - - - - - Timeout Variables - - - - - - - - - - */
+
+unsigned long last_action_time_;
+const unsigned long timeout_time_ = 120000;
+bool timeout_active_;
 
 
 /* - - - - - - - - State Control Structure - - - - - - - - */
@@ -156,6 +165,9 @@ void setup()
   pinMode(MOTOR_ENC_A, INPUT);
   pinMode(MOTOR_ENC_B, INPUT);
   pinMode(MOTOR_PWM, OUTPUT);
+  pinMode(OFF_SWITCH, OUTPUT);
+  last_action_time_ = millis();
+  timeout_active_ = true;
 }
 
 void loop() 
@@ -164,6 +176,11 @@ void loop()
   unsigned long cur_time = millis();
   checkSwitchState(cur_time);
   updateDeviceState();
+
+  // power off if device is inactive for too long
+  if (timeout_active_ 
+      && millis() - last_action_time_ > timeout_time_)
+    digitalWrite(OFF_SWITCH, HIGH);
 }
 
 // starts communication with IMU and magnetometer
@@ -285,6 +302,8 @@ void checkEncoderState()
   	if (highlighted_state_ < 0)
     	highlighted_state_ += cur_state_->num_options;
 
+    last_action_time_ = millis();
+
     DEBUG_PORT.print("encoder updated to: ");
     DEBUG_PORT.println(encoder_pos_);
     DEBUG_PORT.print("highlighted option: ");
@@ -301,6 +320,7 @@ void checkSwitchState(unsigned long cur_time)
       if (cur_state_->switch_active)
       	advance_state_ = true;
       last_switch_time_ = cur_time;
+      last_action_time_ = millis();
       DEBUG_PORT.println("switch press detected");
     }
   }
@@ -349,10 +369,14 @@ void initDisplay()
   display_.clearDisplay();
   display_.setCursor(0,0);
   display_.setTextColor(WHITE);
-  display_.println("Limited UI test using");
-  display_.println("IMU orientation filter");
+  display_.println("Alicia's star");
+  display_.println("tracking camera");
+  display_.println("mount for");
+  display_.println("astrophotography");
+  display_.println();
+  display_.println("Happy Anniversary!");
   display_.display();
-  delay(1000);
+  delay(3000);
   disp_state_change_ = true;
 }
 
@@ -380,6 +404,7 @@ void initEncoder()
 
 void initGPS()
 {
+  timeout_active_ = false;
   DEBUG_PORT.println("enabling gps");
   digitalWrite(GPS_ENABLE_PIN, HIGH);
   delay(100);
@@ -390,7 +415,9 @@ void initGPS()
 
 void endGPS()
 {
+  timeout_active_ = true;
   digitalWrite(GPS_ENABLE_PIN, LOW);
+  last_action_time_ = millis();
 }
 
 void updateGPS()
@@ -417,7 +444,14 @@ static void printGPSStatus(const gps_fix &fix)
     display_.display();
     delay(1000);
     longitude_ = fix.longitude();
-    latitude_ = fix.longitude();
+    latitude_ = fix.latitude();
+    year_ = fix.dateTime.year + 2000;
+    DEBUG_PORT.print("latitude: ");
+    DEBUG_PORT.println(latitude_);
+    DEBUG_PORT.print("longitude: ");
+    DEBUG_PORT.println(longitude_);
+    DEBUG_PORT.print("year: ");
+    DEBUG_PORT.println(year_);
     advance_state_ = true;
   }
   else
@@ -485,12 +519,9 @@ void initSD()
 void lookupDeclination()
 {
   // hardcoding latitude and longitude until GPS is working
-  latitude_ = 40;
-  longitude_ = -105;
-  int year = 2018;
   char filename[40];
   memset(filename, '\0', 40);
-  getFileName(latitude_, longitude_, year, filename, 40);
+  getFileName(latitude_, longitude_, year_, filename, 40);
 
   File dec_file;
   dec_file = SD.open(filename, FILE_READ);
@@ -531,10 +562,11 @@ void setExposure()
       encoder_pos_ = 0;
       last_encoder_pos_ = 0;
     }
-    exposure_time_ = encoder_pos_;
+    exposure_time_ = encoder_pos_ * 5;
     display_.clearDisplay();
     display_.setCursor(0,0);
-    display_.println("Select exposure");
+    display_.println("Select exposure time");
+    display_.println("(in seconds)");
     display_.println(exposure_time_);
     printText();
     display_.display();
@@ -547,16 +579,16 @@ void encoderAUpdate(uint8_t enc_a_state, uint8_t enc_b_state)
   if (enc_a_state == HIGH)
   {
     if (enc_b_state == LOW)
-      encoder_pos_++;
-    else
       encoder_pos_--;
+    else
+      encoder_pos_++;
   }
   else
   {
     if (enc_b_state == HIGH)
-      encoder_pos_++;
-    else
       encoder_pos_--;
+    else
+      encoder_pos_++;
   }
 }
 
@@ -566,16 +598,16 @@ void encoderBUpdate(uint8_t enc_a_state, uint8_t enc_b_state)
   if (enc_b_state == HIGH)
   {
     if (enc_a_state == HIGH)
-      encoder_pos_++;
-    else
       encoder_pos_--;
+    else
+      encoder_pos_++;
   }
   else
   {
     if (enc_a_state == LOW)
-      encoder_pos_++;
-    else
       encoder_pos_--;
+    else
+      encoder_pos_++;
   }
 }
 
@@ -675,6 +707,8 @@ double getSpeed(double deltaT)
   {
     cur_speed = last_speed_;
   }
+  DEBUG_PORT.print("speed: ");
+  DEBUG_PORT.println(cur_speed);
   return cur_speed;
 }
 
@@ -703,9 +737,11 @@ void resetPIDVars()
 }
 void initMotor()
 {
+  timeout_active_ = false;
+  
   digitalWrite(MOTOR_DIR_PIN, HIGH);
-  set_point_ = 98.0;
-  resetPIDVars();
+  set_point_ = 38.99;
+  //set_point_ = 100;
   
   motor_start_time_ = millis();
   display_.clearDisplay();
@@ -722,13 +758,16 @@ void runMotor()
 void stopMotor()
 {
   analogWrite(MOTOR_PWM, 0);
+  resetPIDVars();
+  timeout_active_ = true;
+  last_action_time_ = millis();
 }
 
 void resetInit()
 {
+  timeout_active_ = false;
   digitalWrite(MOTOR_DIR_PIN, LOW);
   set_point_ = 800.0;
-  resetPIDVars();
 }
 
 void resetMotor()
@@ -799,26 +838,19 @@ stateNode* initStatePointers()
   dec_lookup->next_states[0] = auto_orient;
   dec_lookup->num_options = 1;
   dec_lookup->num_lines = 2;
-  strcpy(dec_lookup->disp_options[0],"finding local");
+  strcpy(dec_lookup->disp_options[0],"looking up local");
   strcpy(dec_lookup->disp_options[1],"magnetic declination");
   dec_lookup->init_func = initSD; 
   dec_lookup->action = lookupDeclination;
   dec_lookup->end_func = NULL;
   dec_lookup->switch_active = false;
 
-  stateNode *dead_end = new stateNode();
-  strcpy(dead_end->disp_options[0],"nothing here");
-  dead_end->num_options = 1;
-  dead_end->num_lines = 1;
-  dead_end->action = displayText;
-  dead_end->init_func = NULL;
-  dead_end->end_func = NULL;
-  dead_end->next_states[0] = dead_end;
-
   auto_orient->num_options = 1;
   auto_orient->num_lines = 3;
 
-  strcpy(auto_orient->disp_options[0], "press OK when done");
+  strcpy(auto_orient->disp_options[0], "press OK when the");
+  strcpy(auto_orient->disp_options[1], "orientations shown");
+  strcpy(auto_orient->disp_options[2], "match the targets");
   auto_orient->init_func = initIMU;
   auto_orient->action = orientFilter;
   auto_orient->end_func = NULL;
@@ -841,24 +873,24 @@ stateNode* initStatePointers()
   set_exposure->num_options = 1;
   set_exposure->num_lines = 2;
   set_exposure->init_func = NULL;
-  set_exposure->action = setExposure; // not implemented
+  set_exposure->action = setExposure; 
   set_exposure->end_func = NULL;
   set_exposure->next_states[0] = run_motor;
   set_exposure->switch_active = true;
 
   run_motor->num_options = 1;
   run_motor->num_lines = 0;
-  run_motor->init_func = initMotor; // not implemented
-  run_motor->action = runMotor; // not implemented
+  run_motor->init_func = initMotor; 
+  run_motor->action = runMotor; 
   run_motor->end_func = stopMotor;
   run_motor->next_states[0] = reset_motor;
   run_motor->switch_active = false;
 
-  strcpy(reset_motor->disp_options[0], "resetting motor");
+  strcpy(reset_motor->disp_options[0], "resetting camera");
   reset_motor->num_options = 1;
   reset_motor->num_lines = 1;
-  reset_motor->init_func = resetInit; // not implemented
-  reset_motor->action = resetMotor; // not implemented
+  reset_motor->init_func = resetInit; 
+  reset_motor->action = resetMotor; 
   reset_motor->end_func = stopMotor;
   reset_motor->next_states[0] = set_exposure;
   reset_motor->switch_active = false;

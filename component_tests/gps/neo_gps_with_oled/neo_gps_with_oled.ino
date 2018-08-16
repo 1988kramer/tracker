@@ -188,6 +188,9 @@ void setup()
   display.setCursor(0,0);
   display.println("testing GPS with OLED screen!");
   display.display();
+
+  attachInterrupt(0, interruptFunc, CHANGE);
+  attachInterrupt(1, interruptFunc, CHANGE);
   
   DEBUG_PORT.begin(9600);
   while (!DEBUG_PORT)
@@ -215,3 +218,9 @@ void loop()
 {
   GPSloop();
 }
+
+void interruptFunc()
+{
+  
+}
+

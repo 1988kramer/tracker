@@ -95,10 +95,10 @@ void setup() {
   delay(500);
   char filename[40];
   memset(filename, '\0', 40);
-  getFileName(-90,180,2018,filename,40);
+  getFileName(40,-105,2018,filename,40);
   Serial.println(filename);
   float declination;
-  if(findDeclination(-90, 180, filename, declination))
+  if(findDeclination(40, -105, filename, declination))
   {
     Serial.print("found correct declination: ");
     Serial.println(declination);

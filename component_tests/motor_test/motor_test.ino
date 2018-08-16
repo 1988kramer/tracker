@@ -7,11 +7,12 @@
 
 volatile long count;
 long new_count, old_count;
-const double kP = 0.18;
-const double kI = 0.00005;
-const double kD = 0.0001;
+const double kP = 0.3;
+const double kI = 0.1;
+const double kD = 0.005;
 
-int last_time, pid_last_speed;
+int last_time; 
+double pid_last_speed;
 double last_speed;
 double set_point;
 int pwm;
@@ -30,7 +31,7 @@ void setup()
   last_speed = 0.0;
   digitalWrite(DIR_PIN1, HIGH);
   //speed_control.setSpeed(1500);
-  set_point = 98.0;
+  set_point = 38.9;
   av_speed = 0.0;
   prev_time = 0.0;
 }
@@ -86,7 +87,9 @@ double getSpeed(double deltaT)
   {
     cur_speed = last_speed;
   }
-  //updateAvSpeed(cur_speed, deltaT);
+  updateAvSpeed(cur_speed, deltaT);
+  //Serial.print("speed: ");
+  //Serial.println(cur_speed);
   return cur_speed;
 }
 
